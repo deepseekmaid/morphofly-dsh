@@ -112,10 +112,21 @@ export interface Config {
   readonly nativeOpen?: boolean
   /** Positive integral milliseconds of list work before yielding between complete rows. */
   readonly listWorkSliceMs?: number
+  /**
+   * Non-negative integral milliseconds an activated Agent may stay idle before
+   * the Web host releases it; `0` keeps every activated Agent resident.
+   */
+  readonly idleReleaseGraceMs?: number
+  /** Positive integral milliseconds between idle release scans; ignored when release is disabled. */
+  readonly idleReleaseSweepMs?: number
 }
 
 /** Deployment policy after schema defaults have been applied. */
-type ResolvedConfig = Config & { readonly listWorkSliceMs: number }
+type ResolvedConfig = Config & {
+  readonly listWorkSliceMs: number
+  readonly idleReleaseGraceMs: number
+  readonly idleReleaseSweepMs: number
+}
 
 /** Host integrations replaceable by direct unit tests. */
 export interface SessionControllerInternals {
@@ -152,6 +163,8 @@ export class SessionController extends TypertRemoteService {
   static Config: z<Config, ResolvedConfig> = z.object({
     nativeOpen: z.boolean(),
     listWorkSliceMs: z.natural().min(1).default(16),
+    idleReleaseGraceMs: z.natural().default(300_000),
+    idleReleaseSweepMs: z.natural().min(1).default(30_000),
   })
 
   private historyController!: HistoryController
@@ -168,6 +181,8 @@ export class SessionController extends TypertRemoteService {
   private readonly revealPath: (path: string, signal: AbortSignal) => Promise<void>
   private readonly canOpenPath: () => boolean
   private readonly listWorkSliceMs: number
+  private readonly idleReleaseGraceMs: number
+  private readonly idleReleaseSweepMs: number
   private readonly promotions = new Set<Promise<void>>()
 
   /**
@@ -177,7 +192,10 @@ export class SessionController extends TypertRemoteService {
    */
   constructor(ctx: Context, config: Config, internals: SessionControllerInternals = {}) {
     super(ctx, 'sessionController', { namespace: 'session' })
-    this.listWorkSliceMs = SessionController.Config(config).listWorkSliceMs
+    const resolved = SessionController.Config(config)
+    this.listWorkSliceMs = resolved.listWorkSliceMs
+    this.idleReleaseGraceMs = resolved.idleReleaseGraceMs
+    this.idleReleaseSweepMs = resolved.idleReleaseSweepMs
     this.fileApplications = internals.fileApplications ?? nativeFileApplications
     this.openFileApplication = internals.openFileApplication ?? openNativeFileApplication
     this.openPath = internals.openPath ?? openNativeAssociatedPath
@@ -189,8 +207,12 @@ export class SessionController extends TypertRemoteService {
   protected async [Service.init](): Promise<void> {
     const ctx = this.ctx
     ctx.typert.resources.register('session', { resolve: resolveSessionResource })
-    this.agents = new ApiSessionAgentController(ctx)
+    this.agents = new ApiSessionAgentController(ctx, {
+      graceMs: this.idleReleaseGraceMs,
+      sweepMs: this.idleReleaseSweepMs,
+    })
     this.agents.initialize()
+    ctx.effect(() => this.agents.startIdleRelease(), 'session-controller.idleRelease()')
     this.commands = new SessionCommandController(ctx, this.agents, process.cwd())
     ctx.effect(() => ctx.fileUploads.registerAgentResolver(async (sessionId) => {
       const result = await this.agents.resolveAgent(sessionId)
@@ -225,6 +247,11 @@ export class SessionController extends TypertRemoteService {
       ctx.emit('api-session/added', this.listState.summaryFor(session))
     })
     ctx.on('session/disposed', (session) => {
+      // An idle-released Session stays durable and visible as a cold row: its
+      // paired `agent/disposed` already republished the summary with
+      // agentAvailable false, and the next operation resumes it. Removing the
+      // row would make an open conversation vanish from every Client.
+      if (this.agents.isIdleRelease(session.id)) return
       ctx.emit('api-session/removed', session.id)
     })
     const publishAgentAvailability = ({ agent }: { agent: Agent }): undefined => {

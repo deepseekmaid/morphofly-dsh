@@ -3,13 +3,14 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent, AgentOptions, AgentSetup } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentOptions, AgentSetup, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionQueryError, type SessionObservation } from '@deepseek-ai/dsh-session-query'
+import { IdleAgentRelease, type IdleReleaseOptions } from './idle-release.ts'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-typert-registry'
 
@@ -117,9 +118,15 @@ export class ApiSessionAgentController {
   private readonly resumes = new Map<SessionId, Promise<Agent>>()
   private readonly claims = new Map<SessionId, Promise<void>>()
   private readonly imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
+  private readonly idleRelease: IdleAgentRelease
 
-  /** @param ctx - Host context carrying Agent, model, persistence, and Typert services. */
-  constructor(private readonly ctx: Context) {}
+  /**
+   * @param ctx - Host context carrying Agent, model, persistence, and Typert services.
+   * @param idleRelease - idle-release policy and test clock; release is disabled by default.
+   */
+  constructor(private readonly ctx: Context, idleRelease: IdleReleaseOptions = {}) {
+    this.idleRelease = new IdleAgentRelease(ctx, idleRelease)
+  }
 
   /**
    * Configure Session and Agent lookups for Typert.
@@ -144,6 +151,31 @@ export class ApiSessionAgentController {
   }
 
   /**
+   * Start the periodic idle release and return its disposer.
+   * @returns the disposer that stops the release scan.
+   */
+  startIdleRelease(): () => void {
+    return this.idleRelease.start()
+  }
+
+  /**
+   * Release every tracked Agent idle past the configured grace period.
+   * @returns fulfillment after every due release settles.
+   */
+  releaseIdle(): Promise<void> {
+    return this.idleRelease.releaseIdle()
+  }
+
+  /**
+   * Whether one Session's Agent is being released because it went idle.
+   * @param sessionId - Session identity to test.
+   * @returns true while the idle release of that Session is in flight.
+   */
+  isIdleRelease(sessionId: SessionId): boolean {
+    return this.idleRelease.isReleasing(sessionId)
+  }
+
+  /**
    * Resolve or resume one ordinary Session, deduplicating concurrent resumes.
    * @param sessionId - ordinary Session identity.
    * @returns the live Agent or a stable Session-domain failure.
@@ -165,8 +197,12 @@ export class ApiSessionAgentController {
     sessionId: SessionId,
     observation?: SessionObservation,
   ): Promise<ApiSessionAgentResult> {
+    await this.idleRelease.settled(sessionId)
     const live = this.liveAgent(sessionId)
-    if (live !== undefined) return live
+    if (live !== undefined) {
+      this.idleRelease.touch(sessionId)
+      return live
+    }
     const attached = this.ctx.sessions.get(sessionId)
     if (attached !== undefined && hasApiSessionSubagentOwner(attached)) {
       return { error: apiSessionSubagentOwnershipError(sessionId) }
@@ -182,6 +218,7 @@ export class ApiSessionAgentController {
       // A shared resume can publish an identity that subagent routing adopts
       // before every waiter observes it; apply the live ownership policy again.
       const published = this.liveAgent(sessionId)
+      this.idleRelease.touch(sessionId)
       return published ?? { agent }
     } catch (error: unknown) {
       if (error instanceof ApiSessionNotFound) {
@@ -310,11 +347,13 @@ export class ApiSessionAgentController {
     if (published !== undefined && hasApiSessionSubagentOwner(published)) {
       throw new ApiSessionSubagentOwnership(sessionId)
     }
-    return (await this.ctx.agents.resume({
+    const handle = await this.ctx.agents.resume({
       resumeSessionId: sessionId,
       agentOptions: this.agentOptions(),
       setup: composition.setup,
-    })).agent
+    })
+    this.idleRelease.track(handle)
+    return handle.agent
   }
 
   private async inOrder<Value>(sessionId: SessionId, operation: () => Promise<Value>): Promise<Value> {
@@ -330,12 +369,14 @@ export class ApiSessionAgentController {
 
   /** @returns the reused Session, a new Session under `sessionId` when none is stored, or a new Session under a minted identity. */
   private async claim(sessionId: SessionId, request: ApiSessionCreateRequest): Promise<Agent> {
+    await this.idleRelease.settled(sessionId)
     const attached = this.ctx.sessions.get(sessionId)
     const live = this.ctx.agents.get(sessionId)
     if (attached !== undefined && hasApiSessionSubagentOwner(attached)) {
       throw new ApiSessionSubagentOwnership(sessionId)
     }
     if (live !== undefined) {
+      this.idleRelease.touch(sessionId)
       if (live.session.header.cwd !== request.cwd) {
         throw new ApiSessionCwdConflict(live.id, request.cwd, live.session.header.cwd)
       }
@@ -364,11 +405,13 @@ export class ApiSessionAgentController {
     if (!reusable) return this.createMinted(request.cwd, composition)
     this.assertPresetApplicable(sessionId, request.agentPreset)
     try {
-      return (await this.ctx.agents.resume({
+      const handle = await this.ctx.agents.resume({
         resumeSessionId: sessionId,
         agentOptions: this.agentOptions(),
         setup: this.reuseSetup(composition),
-      })).agent
+      })
+      this.idleRelease.track(handle)
+      return handle.agent
     } catch (error: unknown) {
       if (error instanceof ApiSessionStartedSinceObserved) return this.createMinted(request.cwd, composition)
       if (!(error instanceof Error) || error.name !== 'SessionAlreadyOwnedError') throw error
@@ -433,13 +476,26 @@ export class ApiSessionAgentController {
     return this.createAgent(brandString<SessionId>(`session-${randomUUID()}`), cwd, composition)
   }
 
+  /**
+   * Create one Agent through the registry factory and retain its lifecycle for
+   * idle release. Callers that build their own creation options (fork) use
+   * this instead of the registry so the Agent is released once idle.
+   * @param options - complete creation options, including setup composition.
+   * @returns the created Agent.
+   */
+  async createTrackedAgent(options: CreateAgentOptions): Promise<Agent> {
+    const handle = await this.ctx.agents.create(options)
+    this.idleRelease.track(handle)
+    return handle.agent
+  }
+
   private async createAgent(sessionId: SessionId, cwd: string, composition: ApiSessionComposition): Promise<Agent> {
     try {
       await mkdir(cwd, { recursive: true })
     } catch (error: unknown) {
       throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
     }
-    return (await this.ctx.agents.create({
+    return await this.createTrackedAgent({
       sessionId,
       agentOptions: this.agentOptions(),
       meta: {
@@ -447,7 +503,7 @@ export class ApiSessionAgentController {
         ...(composition.agentPreset === undefined ? {} : { agentPreset: composition.agentPreset }),
       },
       setup: composition.setup,
-    })).agent
+    })
   }
 
   private agentOptions(): AgentOptions {
