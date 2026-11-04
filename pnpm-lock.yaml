@@ -282,15 +282,27 @@ importers:
       '@deepseek-ai/cordis':
         specifier: workspace:~
         version: link:../../vendor/cordis
+      '@deepseek-ai/cordis-plugin-group':
+        specifier: workspace:~
+        version: link:../../vendor/group
+      '@deepseek-ai/cordis-plugin-hmr':
+        specifier: workspace:~
+        version: link:../../vendor/hmr
       '@deepseek-ai/cordis-plugin-include':
         specifier: workspace:~
         version: link:../../vendor/include
       '@deepseek-ai/cordis-plugin-loader':
         specifier: workspace:~
         version: link:../../vendor/loader
+      '@deepseek-ai/cordis-plugin-logger-console':
+        specifier: workspace:~
+        version: link:../../vendor/logger-console
       '@deepseek-ai/cordis-plugin-timer':
         specifier: workspace:~
         version: link:../../vendor/timer
+      '@deepseek-ai/cosmokit':
+        specifier: link:../../vendor/cosmokit
+        version: link:../../vendor/cosmokit
       '@deepseek-ai/dsh-acp-app':
         specifier: workspace:*
         version: link:../../packages/bundle/acp-app
