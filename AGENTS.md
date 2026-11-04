@@ -11,6 +11,8 @@ DeepSeek Harness is an all-plugin Cordis agent harness. Read [docs/architecture.
 - Sync: fast-forward `master` from upstream, then merge `master` into `custom`; resolve conflicts only on `custom`.
 - Upstream-facing work such as pull requests and design discussions branches from `master`, never from `custom`.
 
+Local work may diverge freely: new packages, changed released session formats, and undocumented experiments are acceptable when they serve the owner's workflow. Upstream compatibility requirements apply only to `master`-based work.
+
 ## Pre-stable APIs and released Session data
 
 Public APIs are pre-stable; update every consumer. Follow [version/status](docs/session-format-status.md) and [type acknowledgements](docs/cookbook/reviewing-persistence-type-changes.md). [Adjacent migration](.agents/notes/implemented/architecture/2026-08-31-released-session-format-migrations.md) may add a version-named successor but never move, overwrite, or delete committed generations; predecessors imply neither fallback nor downgrade support. SQLite uses monotonic `SCHEMA_VERSION`.
