@@ -2,6 +2,15 @@
 
 DeepSeek Harness is an all-plugin Cordis agent harness. Read [docs/architecture.md](docs/architecture.md) before changing `packages/`; follow [docs/AGENTS.md](docs/AGENTS.md) for documentation.
 
+## This repository: the owner's personal distribution
+
+`wings1848/morphofly-dsh` is the owner's personal DSH distribution: a place for extensive, aggressive, and frontier changes and experiments that upstream would not accept as-is. Local-only risk is expected here, including divergent session formats and behavior that released dsh builds do not support.
+
+- `master` mirrors `deepseek-ai/deepseek-harness` and only fast-forwards from it. Never commit local work there.
+- `custom` is the development trunk where all local changes, experiments, and work in progress land.
+- Sync: fast-forward `master` from upstream, then merge `master` into `custom`; resolve conflicts only on `custom`.
+- Upstream-facing work such as pull requests and design discussions branches from `master`, never from `custom`.
+
 ## Pre-stable APIs and released Session data
 
 Public APIs are pre-stable; update every consumer. Follow [version/status](docs/session-format-status.md) and [type acknowledgements](docs/cookbook/reviewing-persistence-type-changes.md). [Adjacent migration](.agents/notes/implemented/architecture/2026-08-31-released-session-format-migrations.md) may add a version-named successor but never move, overwrite, or delete committed generations; predecessors imply neither fallback nor downgrade support. SQLite uses monotonic `SCHEMA_VERSION`.
