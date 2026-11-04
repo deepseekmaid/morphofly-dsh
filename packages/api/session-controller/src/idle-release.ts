@@ -162,7 +162,8 @@ export class IdleAgentRelease {
         this.tracked.delete(sessionId)
         await tracked.handle.dispose()
       } finally {
-        if (this.releasing.get(sessionId) === gate.promise) this.releasing.delete(sessionId)
+        // The scan never starts a second release for a Session still in `releasing`.
+        this.releasing.delete(sessionId)
         gate.resolve()
       }
     })()
