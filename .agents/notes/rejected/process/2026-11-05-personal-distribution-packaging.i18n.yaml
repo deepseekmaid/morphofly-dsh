@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-11-05-personal-distribution-packaging.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/rejected/process/2026-11-05-personal-distribution-packaging.md
+/agent-note-package-and-distribute-the-personal-distribution-without-an-npm-package-or-desktop-installers:
+  en: 6272b56b33ac2bdf
+  zh: ebfa7ec4c62b9f11
+/agent-note-package-and-distribute-the-personal-distribution-without-an-npm-package-or-desktop-installers/problem:
+  en: 0177341b28bcb581
+  zh: 7181072c058ee81a
+/agent-note-package-and-distribute-the-personal-distribution-without-an-npm-package-or-desktop-installers/proposal:
+  en: a6132bb525551509
+  zh: 71799bd78c83983e
+/agent-note-package-and-distribute-the-personal-distribution-without-an-npm-package-or-desktop-installers/alternatives-considered:
+  en: ee0bf6173dbc6778
+  zh: e752923c918db00f
+/agent-note-package-and-distribute-the-personal-distribution-without-an-npm-package-or-desktop-installers/consequences:
+  en: aeb68caeeba31774
+  zh: b55e67041e92fecf
