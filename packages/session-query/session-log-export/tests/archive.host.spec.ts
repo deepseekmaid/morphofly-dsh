@@ -897,7 +897,7 @@ describe('session.export download endpoint', () => {
     expect(Object.keys(files).sort()).toEqual(['media/tool-image.webp', exportLogName].sort())
   })
 
-  it('scans wrapped, inserted, and embedded-stream carriers plus non-object content items', async () => {
+  it('scans wrapped and inserted carriers plus non-object content items', async () => {
     const block = (id: string, mediaType: string): unknown =>
       ({ type: 'image', attachment: { attachmentId: id, mediaType, bytes: 4, width: 2, height: 2 } })
     const wrapped = {
@@ -910,22 +910,43 @@ describe('session.export download endpoint', () => {
         id: 'inserted-message' as UserMessage['id'], role: 'user', source: { kind: 'user' }, content: [block('inserted-1', 'image/gif')],
       }] },
     } as SessionEvent
-    const attempt = {
-      type: 'assistant/attempt', seq: SessionSeq(4), time: 4000,
-      data: {
-      },
-    } as unknown as SessionEvent
-    const api = await buildApi({ 'session-root': log('session-root', undefined, [wrapped, inserted, attempt]) })
+    const api = await buildApi({ 'session-root': log('session-root', undefined, [wrapped, inserted]) })
     const response = await toFetchHandler(api).fetch(
       new Request('http://host/api/session.export?sessionId=session-root'),
     )
     const files = unzipSync(await responseBytes(response))
     expect(Object.keys(files).sort()).toEqual([
       'media/inserted-1.gif',
-      'media/stream-1.png',
       'media/wrapped-1.jpg',
       exportLogName,
     ])
+  })
+
+  it('packages V5 settlement sidecars beside the exported log', async () => {
+    const stream = [{ type: 'text-chunks', time0: 10, index: 0, dt: [1], texts: ['hi'] }]
+    const settlement = {
+      type: 'assistant/message', seq: SessionSeq(1), time: 2000, surfaceOp: 'append',
+      data: {
+        turn: 1, step: 1, firstTokenTime: 5,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+      },
+    } as unknown as SessionEvent
+    const stored = log('session-root', undefined, [turnStart, settlement])
+    const api = await buildApi({ 'session-root': stored }, [], {
+      open: async () => {
+        const handle = readHandle(stored) as SessionHandle & {
+          readAssistantStream(seq: number): Promise<readonly unknown[] | undefined>
+        }
+        handle.readAssistantStream = async seq => (seq === 1 ? stream : undefined)
+        return handle
+      },
+    })
+    const response = await toFetchHandler(api).fetch(
+      new Request('http://host/api/session.export?sessionId=session-root'),
+    )
+    const files = unzipSync(await responseBytes(response))
+    expect(Object.keys(files).sort()).toEqual(['streams.v1/s1.jsonl', exportLogName].sort())
+    expect(strFromU8(files['streams.v1/s1.jsonl']!)).toBe(`${JSON.stringify({ seq: 1, stream })}\n`)
   })
 
   it('deduplicates one media object referenced by several included logs', async () => {

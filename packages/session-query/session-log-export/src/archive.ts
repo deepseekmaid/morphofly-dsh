@@ -150,6 +150,33 @@ export async function readSessionLogText(
   id: SessionId,
   signal?: AbortSignal,
 ): Promise<string | undefined> {
+  return (await readSessionLogData(persistence, id, signal))?.text
+}
+
+/** One stored Session's canonical JSONL text plus its sidecar stream entries. */
+export interface SessionLogRead {
+  /** Canonical JSONL text of the logical log. */
+  readonly text: string
+  /** One entry per sidecar stream the backend can return, in sequence order. */
+  readonly entries: readonly SessionLogZipEntry[]
+}
+
+/**
+ * Read one stored Session through a single read handle: serialize its logical
+ * log and package every settlement sidecar the backend can return.
+ *
+ * A backend without the optional stream reader, or a historical generation
+ * whose streams still live inside the log, contributes no sidecar entries.
+ * @param persistence - the mounted persistence backend.
+ * @param id - the session to read.
+ * @param signal - optional cancellation forwarded to the open, read, and stream reads.
+ * @returns the logical text and sidecar entries, or `undefined` when the session does not exist.
+ */
+export async function readSessionLogData(
+  persistence: SessionPersistence,
+  id: SessionId,
+  signal?: AbortSignal,
+): Promise<SessionLogRead | undefined> {
   const options = signal === undefined ? {} : { signal }
   let handle: SessionHandle
   try {
@@ -162,7 +189,20 @@ export async function readSessionLogText(
   }
   try {
     const { events } = await handle.read(0, undefined, options)
-    return serializeSessionLog(handle.header, events)
+    const entries: SessionLogZipEntry[] = []
+    if (handle.readAssistantStream !== undefined) {
+      for (const event of events) {
+        if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') continue
+        signal?.throwIfAborted()
+        const stream = await handle.readAssistantStream(event.seq, options)
+        if (stream === undefined) continue
+        entries.push({
+          path: `streams.v1/s${String(event.seq)}.jsonl`,
+          content: `${JSON.stringify({ seq: event.seq, stream })}\n`,
+        })
+      }
+    }
+    return { text: serializeSessionLog(handle.header, events), entries }
   } finally {
     await handle.close()
   }
@@ -243,7 +283,6 @@ function collectEventAttachmentRefs(
     inserted?: unknown
     summary?: unknown
     rawOutput?: unknown
-    stream?: Array<{ type?: unknown; chunk?: { type?: unknown; block?: unknown } }>
   }
   switch (row.type) {
     case 'user/message': case 'tool/ptc-dispatch':
@@ -270,13 +309,6 @@ function collectEventAttachmentRefs(
       break
     case 'assistant/attempt': break
     default: return
-  }
-  if (carrier.stream !== undefined) {
-    for (const record of carrier.stream) {
-      if (record.type === 'chunk' && record.chunk?.type === 'block-end') {
-        collectAttachmentRefs([record.chunk.block], images, files)
-      }
-    }
   }
 }
 
@@ -350,6 +382,7 @@ export async function* sessionLogZipEntries(
   sessionId: SessionId,
   includeDescendants: boolean,
   signal?: AbortSignal,
+  rootEntries: readonly SessionLogZipEntry[] = [],
 ): AsyncGenerator<SessionLogZipEntry> {
   const media = new Map<string, ImageAttachmentRef>()
   const files = new Map<string, FileAttachmentRef>()
@@ -360,6 +393,7 @@ export async function* sessionLogZipEntries(
   }
   rememberAttachments(rootContent)
   yield { path: SESSION_LOG_FILENAME, content: rootContent }
+  yield* rootEntries
   if (includeDescendants) {
     const seen = new Set<SessionId>([sessionId])
     const collect = async function* (
@@ -371,15 +405,16 @@ export async function* sessionLogZipEntries(
         if (seen.has(id)) continue
         seen.add(id)
         await flushLiveSessionLog(deps, id, signal)
-        const content = await readSessionLogText(deps.sessionPersistence, id, signal)
+        const stored = await readSessionLogData(deps.sessionPersistence, id, signal)
         signal?.throwIfAborted()
-        if (content === undefined) {
+        if (stored === undefined) {
           throw new Error(`subagent "${id}" has no stored log`)
         }
-        rememberAttachments(content)
-        yield {
-          path: `subagents/${safeSessionIdSegment(id)}/${SESSION_LOG_FILENAME}`,
-          content,
+        rememberAttachments(stored.text)
+        const prefix = `subagents/${safeSessionIdSegment(id)}/`
+        yield { path: `${prefix}${SESSION_LOG_FILENAME}`, content: stored.text }
+        for (const entry of stored.entries) {
+          yield { ...entry, path: `${prefix}${entry.path}` }
         }
         yield* collect(node.descendants)
       }
@@ -549,6 +584,7 @@ export function streamSessionLogZip(
   includeDescendants: boolean,
   compressionLevel: SessionLogCompressionLevel,
   signal: AbortSignal,
+  rootEntries: readonly SessionLogZipEntry[] = [],
 ): ReadableStream<Uint8Array> {
   const consumerAbort = new AbortController()
   const producerSignal = AbortSignal.any([signal, consumerAbort.signal])
@@ -579,7 +615,7 @@ export function streamSessionLogZip(
       zip = archive
       void (async () => {
         try {
-          for await (const entry of sessionLogZipEntries(deps, rootContent, sessionId, includeDescendants, producerSignal)) {
+          for await (const entry of sessionLogZipEntries(deps, rootContent, sessionId, includeDescendants, producerSignal, rootEntries)) {
             const deflate = new ZipDeflate(entry.path, { level: compressionLevel })
             archive.add(deflate)
             if ('content' in entry) {
