@@ -133,12 +133,12 @@ describe('agent loop', () => {
     ctx.on('agent/assistant-stream', ({ agent: subject, frame }) => {
       if (subject === agent) frames.push(frame)
     })
-    const append = agent.session.append.bind(agent.session)
-    Object.defineProperty(agent.session, 'append', {
+    const append = agent.session.appendWithCarry.bind(agent.session)
+    Object.defineProperty(agent.session, 'appendWithCarry', {
       configurable: true,
-      value: (...args: Parameters<typeof agent.session.append>): ReturnType<typeof agent.session.append> => {
+      value: (...args: Parameters<typeof agent.session.appendWithCarry>): ReturnType<typeof agent.session.appendWithCarry> => {
         if (args[0] === 'assistant/message') throw new Error('settlement rejected')
-        return Reflect.apply(append, agent.session, args) as ReturnType<typeof agent.session.append>
+        return Reflect.apply(append, agent.session, args) as ReturnType<typeof agent.session.appendWithCarry>
       },
     })
 
@@ -254,12 +254,12 @@ describe('agent loop', () => {
         if (chunk.type === 'text-delta') throw streamFailure
       }
     })
-    const append = agent.session.append.bind(agent.session)
-    Object.defineProperty(agent.session, 'append', {
+    const append = agent.session.appendWithCarry.bind(agent.session)
+    Object.defineProperty(agent.session, 'appendWithCarry', {
       configurable: true,
-      value: (...args: Parameters<typeof agent.session.append>): ReturnType<typeof agent.session.append> => {
+      value: (...args: Parameters<typeof agent.session.appendWithCarry>): ReturnType<typeof agent.session.appendWithCarry> => {
         if (args[0] === 'assistant/attempt') throw settlementFailure
-        return Reflect.apply(append, agent.session, args) as ReturnType<typeof agent.session.append>
+        return Reflect.apply(append, agent.session, args) as ReturnType<typeof agent.session.appendWithCarry>
       },
     })
     const errors: unknown[] = []

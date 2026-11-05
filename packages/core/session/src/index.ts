@@ -12,10 +12,10 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { assertNever, deepFreeze, snapshotJsonValue } from '@deepseek-ai/dsh-util-values'
 import { scopeOf, scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
-import type { Message } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord, Message } from '@deepseek-ai/dsh-llm'
 import { SESSION_FORMAT_VERSION, SessionLogOffset, SessionSeq } from './types.ts'
 import type { TypertLookup } from '@deepseek-ai/dsh-typert-protocol'
-import type { CreateSessionOptions, EpochHeader, PluginRecord, PluginRecordMap, PluginRecordType, PrepareSessionOptions, RequestContext, SessionEvent, SessionEventMap, SessionEventType, SessionHeader, SessionId, SessionSeedEventState, SurfaceIntent, SurfaceEventType } from './types.ts'
+import type { CreateSessionOptions, EpochHeader, PluginRecord, PluginRecordMap, PluginRecordType, PrepareSessionOptions, RequestContext, SessionAppendCarry, SessionEvent, SessionEventMap, SessionEventType, SessionHeader, SessionId, SessionSeedEventState, SurfaceIntent, SurfaceEventType } from './types.ts'
 import { SurfaceManager, validateSessionEventData, validateSurfaceMetadata } from './surface.ts'
 import type { SessionSurface, SessionMessageProjection } from './surface.ts'
 import { foldRequestHeader } from './request-header.ts'
@@ -524,6 +524,8 @@ export function pluginRecordOf(event: SessionEvent): PluginRecord | undefined {
  */
 export class Session {
   private log: SessionEvent[] = []
+  /** Streams carried by an in-flight append; a persistence writer claims them during dispatch. */
+  private readonly pendingAssistantStreams = new Map<SessionSeq, readonly AssistantStreamRecord[]>()
   /** Single incremental owner of surface acceptance and projection state. */
   private readonly surfaceManager: SurfaceManager
 
@@ -808,8 +810,54 @@ export class Session {
     data: SessionEventMap[T],
     ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []
   ): SessionEvent<T> {
+    return this.appendCarrying(type, data, opts[0], undefined)
+  }
+
+  /**
+   * Append one event together with a non-durable side payload.
+   *
+   * A persistence writer claims the payload during the append's synchronous
+   * `session/event` dispatch; see {@link takeAssistantStream}. A payload that
+   * no writer claims is dropped when the append returns.
+   * @param type - event type.
+   * @param data - event payload.
+   * @param carry - side payload accompanying this event.
+   * @param opts - surface placement, required for message-producing event types.
+   * @returns the logged event, as {@link append}.
+   */
+  appendWithCarry<T extends SessionEventType>(
+    type: T,
+    data: SessionEventMap[T],
+    carry: SessionAppendCarry,
+    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []
+  ): SessionEvent<T> {
+    return this.appendCarrying(type, data, opts[0], carry)
+  }
+
+  /**
+   * Claim the side payload carried by one append.
+   *
+   * Persistence writers call this from their synchronous `session/event`
+   * listener. A payload is returned at most once; a second claim returns
+   * undefined.
+   * @param seq - the appended event's sequence.
+   * @returns the carried Assistant stream, or undefined when none was carried or already claimed.
+   */
+  takeAssistantStream(seq: SessionSeq): readonly AssistantStreamRecord[] | undefined {
+    const stream = this.pendingAssistantStreams.get(seq)
+    if (stream === undefined) return undefined
+    this.pendingAssistantStreams.delete(seq)
+    return stream
+  }
+
+  /** Validate, snapshot, and commit one append with an optional side payload. */
+  private appendCarrying<T extends SessionEventType>(
+    type: T,
+    data: SessionEventMap[T],
+    surfaceOpts: SurfaceIntent<T> | undefined,
+    carry: SessionAppendCarry | undefined,
+  ): SessionEvent<T> {
     this.publicationEntry()
-    const surfaceOpts: SurfaceIntent | undefined = opts[0]
     const surfaceMetadata = {
       ...surfaceOpts?.sourceEventSeqs === undefined ? {} : { sourceEventSeqs: surfaceOpts.sourceEventSeqs },
       ...surfaceOpts?.surfaceOp === undefined ? {} : { surfaceOp: surfaceOpts.surfaceOp },
@@ -832,7 +880,13 @@ export class Session {
       ...(surfaceMetadataSnapshot as { surfaceOp?: unknown; sourceEventSeqs?: unknown }),
     } as unknown as SessionEvent<T>)
     validateSessionEventData(event, `session event "${type}" at seq ${event.seq}`)
-    this.commit(event as SessionEvent, entry)
+    const stream = carry?.assistantStream
+    if (stream !== undefined) this.pendingAssistantStreams.set(event.seq, stream)
+    try {
+      this.commit(event as SessionEvent, entry)
+    } finally {
+      if (stream !== undefined) this.pendingAssistantStreams.delete(event.seq)
+    }
     return event
   }
 
@@ -1405,7 +1459,6 @@ export class SessionStore extends Service {
       throw new SessionForkError(`session "${childSessionId}" already exists`, 'SESSION_ALREADY_EXISTS')
     }
     const liveSource = this._resolveForkSource(source)
-    // oxlint-disable-next-line typescript/no-deprecated -- Existing fork snapshot read; migration deferred.
     const events = liveSource.snapshotEvents()
     const resolved = this._forkBoundary(liveSource.id, events, boundary)
     const seed = resolved === undefined ? [] : buildForkSeed(events, resolved)

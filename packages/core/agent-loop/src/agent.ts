@@ -502,7 +502,7 @@ export class ReactLoopAgent implements Agent {
           if (signal.aborted) {
             const content = live.interruptedBlocks()
             if (content.length > 0) {
-              live.settle('assistant/message', () => this.session.append('assistant/message', {
+              live.settle('assistant/message', () => this.session.appendWithCarry('assistant/message', {
                 turn,
                 step,
                 message: createAssistantMessage({
@@ -516,17 +516,17 @@ export class ReactLoopAgent implements Agent {
                 interrupted: true,
                 ...live.usage === undefined ? {} : { usage: live.usage },
                 stream: live.stream,
-              }, { surfaceOp: 'append' }).seq)
+              }, { assistantStream: live.stream }, { surfaceOp: 'append' }).seq)
             } else {
               live.settle(
                 'assistant/attempt',
-                () => this.session.append('assistant/attempt', { turn, step, stream: live.stream }).seq,
+                () => this.session.appendWithCarry('assistant/attempt', { turn, step, stream: live.stream }, { assistantStream: live.stream }).seq,
               )
             }
           } else {
             live.settle(
               'assistant/attempt',
-              () => this.session.append('assistant/attempt', { turn, step, stream: live.stream }).seq,
+              () => this.session.appendWithCarry('assistant/attempt', { turn, step, stream: live.stream }, { assistantStream: live.stream }).seq,
             )
           }
         } catch (settlementError: unknown) {
@@ -543,7 +543,7 @@ export class ReactLoopAgent implements Agent {
         if (finish.kind === 'error' || finish.kind === 'aborted') {
           live.settle(
             'assistant/attempt',
-            () => this.session.append('assistant/attempt', { turn, step, stream: live.stream }).seq,
+            () => this.session.appendWithCarry('assistant/attempt', { turn, step, stream: live.stream }, { assistantStream: live.stream }).seq,
           )
           const action = await this.dispatch.waterfall(
             'agent/request-error', {
@@ -573,13 +573,13 @@ export class ReactLoopAgent implements Agent {
         })
         live.settle(
           'assistant/message',
-          () => this.session.append('assistant/message', {
+          () => this.session.appendWithCarry('assistant/message', {
             turn,
             step,
             message,
             ...live.usage === undefined ? {} : { usage: live.usage },
             stream: live.stream,
-          }, { surfaceOp: 'append' }).seq,
+          }, { assistantStream: live.stream }, { surfaceOp: 'append' }).seq,
         )
         if (finish.kind === 'max-tokens') return { kind: 'max-tokens' }
 

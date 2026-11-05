@@ -486,6 +486,18 @@ export type SurfaceIntent<T extends SurfaceEventType = SurfaceEventType> = {
 })
 
 /**
+ * Non-durable side payload carried alongside one {@link Session.appendWithCarry}.
+ *
+ * A persistence writer claims the payload during the append's synchronous
+ * `session/event` dispatch. Carried data never enters the event log, and a
+ * payload no writer claims is dropped when the append returns.
+ */
+export interface SessionAppendCarry {
+  /** Compact Assistant stream settled by this event, moved out of the log by format V5. */
+  readonly assistantStream?: readonly AssistantStreamRecord[]
+}
+
+/**
  * One immutable entry in the session log.
  *
  * A proper discriminated union over `type` (not independent `type`/`data`
