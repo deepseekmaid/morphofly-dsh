@@ -1,0 +1,158 @@
+# Fork release: build the deployable artifact for the personal distribution and
+# attach it to a GitHub Release.
+#
+# The artifact is one zstd tarball of the complete workspace tree (sources +
+# node_modules + built lib/dist). The deployment target only extracts it and
+# flips a symlink; it never installs, builds, or reaches the network. Deploy and
+# rollback stay manual and local, so no deployment secrets live in this repo.
+name: Fork release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (blank = fork-v<version>-<head9>)'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark the release as a prerelease'
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags: ['fork-v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PRIMARY_NODE_VERSION: '24'
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  release:
+    name: build artifact and publish release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Use runner-owned temporary storage
+        run: |
+          echo "TMPDIR=${{ runner.temp }}" >> "$GITHUB_ENV"
+          echo "NODE_COMPILE_CACHE=${{ runner.temp }}/node-compile-cache" >> "$GITHUB_ENV"
+          echo "ARTIFACTS_DIR=${{ runner.temp }}/artifacts" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v5.0.0
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+          cache: pnpm
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+      - name: Ensure zstd is available
+        run: command -v zstd || { sudo apt-get update -qq && sudo apt-get install -y zstd; }
+      - name: Build package artifacts and the Web bundle
+        run: pnpm run build:artifacts
+      - name: Type-check aggregate tests and scripts against the build
+        run: pnpm run build:check
+      # The extraction smoke check needs ~2.6 GB of unpacked tree beside the
+      # ~0.6 GB tarball; it runs locally when the artifact is produced by hand,
+      # so CI skips it and validates the tarball structurally instead.
+      - name: Pack the full workspace tree
+        run: bash scripts/fork/build-fulltree-artifact.sh --skip-smoke
+      - name: Verify the tarball
+        run: |
+          set -euo pipefail
+          ARTIFACT_DIR="$ARTIFACTS_DIR"
+          ARTIFACT="$(ls "$ARTIFACT_DIR"/dsh-*.tar.zst)"
+          MANIFEST="$(ls "$ARTIFACT_DIR"/dsh-*.manifest.json)"
+          test -s "$ARTIFACT"
+          test -s "$MANIFEST"
+          printf '%s  %s\n' "$(cat "$ARTIFACT.sha256")" "$ARTIFACT" | sha256sum -c -
+          tar_entry_ok="$(zstd -dc "$ARTIFACT" | tar -tf - | grep -cE '^\./(apps/cli/lib/bin\.js|apps/web/dist/index\.html)$' || true)"
+          test "$tar_entry_ok" = "2" || { echo "tarball is missing the CLI entry or the Web bundle" >&2; exit 1; }
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs"
+            const manifest = JSON.parse(readFileSync(process.argv[1], "utf8"))
+            if (manifest.layout !== "full-workspace-tree") throw new Error(`unexpected layout ${manifest.layout}`)
+            console.log(`manifest: ${manifest.releaseId} head=${manifest.gitHeadShort} sha256=${manifest.artifactSha256}`)
+          ' "$MANIFEST"
+      - name: Determine release tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            VERSION="$(node -p 'require("./package.json").version')"
+            TAG="fork-v${VERSION}-$(git rev-parse --short=9 HEAD)"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
+      - name: Write release notes
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ARTIFACT="$(ls "$ARTIFACTS_DIR"/dsh-*.tar.zst)"
+          MANIFEST="$(ls "$ARTIFACTS_DIR"/dsh-*.manifest.json)"
+          SHA="$(cat "$ARTIFACT.sha256")"
+          BYTES="$(stat -c %s "$ARTIFACT")"
+          {
+            echo "## dsh $(node -p 'require("./package.json").version')"
+            echo
+            echo "- release: \`$TAG\`"
+            echo "- commit: \`$(git rev-parse HEAD)\`"
+            echo "- artifact: \`$(basename "$ARTIFACT")\` ($(numfmt --to=iec --suffix=B "$BYTES"))"
+            echo "- sha256: \`$SHA\`"
+            echo "- built on: GitHub-hosted ubuntu-24.04, node $(node -v), pnpm $(pnpm --version)"
+            echo
+            echo 'The tarball contains the full workspace tree; the target only extracts it (no install, build, or network).'
+            echo
+            echo '```sh'
+            echo "sha256sum -c <(echo '$SHA  $(basename "$ARTIFACT")')"
+            echo "tar --zstd -xf $(basename "$ARTIFACT") -C <release-dir>"
+            echo '```'
+          } > release-notes.md
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          cat release-notes.md
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ARTIFACT="$(ls "$ARTIFACTS_DIR"/dsh-*.tar.zst)"
+          MANIFEST="$(ls "$ARTIFACTS_DIR"/dsh-*.manifest.json)"
+          SHA_FILE="$ARTIFACT.sha256"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ARTIFACT" "$MANIFEST" "$SHA_FILE" --clobber
+          else
+            target_args=()
+            if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              target_args=(--target "$GITHUB_SHA")
+            fi
+            gh release create "$TAG" "$ARTIFACT" "$MANIFEST" "$SHA_FILE" \
+              "${target_args[@]}" \
+              --title "morphofly-dsh $TAG" \
+              --notes-file release-notes.md \
+              ${{ inputs.prerelease && '--prerelease' || '' }}
+          fi
+          gh release view "$TAG" --json url,assets --jq '{url, assets: [.assets[].name]}'
+      - name: Summary
+        run: |
+          {
+            echo '### Fork release artifact'
+            echo
+            echo '- tag: `${{ steps.tag.outputs.tag }}`'
+            echo '- commit: `${{ github.sha }}`'
+            echo '- tarball: attached to the GitHub Release'
+          } >> "$GITHUB_STEP_SUMMARY"
