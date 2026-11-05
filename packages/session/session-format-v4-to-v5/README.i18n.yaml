@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/session/session-format-v4-to-v5/README.md
 /:
-  en: 33154bddbeb76f70
-  zh: 77d20e1364db3eef
+  en: 0654d81cc9430024
+  zh: 769230d9759d21aa
 /deepseek-ai-dsh-session-format-v4-to-v5:
   en: 5c911c36fc777867
   zh: 523c41bb93008361
 /deepseek-ai-dsh-session-format-v4-to-v5/summary:
   en: 29ce4bc99b75210f
-  zh: d23b10abecc036d0
+  zh: 21a448e1baff96c6
 /deepseek-ai-dsh-session-format-v4-to-v5/table-of-contents:
   en: 342195656957df59
   zh: 85939b12d6d2fec1
@@ -51,11 +51,23 @@
   en: 9d55fcae47cf469b
   zh: e5b4a701cee8d62b
 /deepseek-ai-dsh-session-format-v4-to-v5/model-experience:
-  en: 9a5c77d3a6c707af
-  zh: 7bfdcdde5d6f44fe
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-session-format-v4-to-v5/model-experience/historical-restoration:
+  en: e63dd8ef6de7cf7c
+  zh: f1e356f01b601079
+/deepseek-ai-dsh-session-format-v4-to-v5/model-experience/historical-restoration/what-the-model-sees:
+  en: 44f30ea630a30fbb
+  zh: a0b16c7501274eca
+/deepseek-ai-dsh-session-format-v4-to-v5/model-experience/historical-restoration/token-effect:
+  en: fc2c27d2b31b0a3b
+  zh: 8affb26a43b3e71b
+/deepseek-ai-dsh-session-format-v4-to-v5/model-experience/historical-restoration/kv-cache-effect:
+  en: 8b552362a77dbd21
+  zh: cce6b1a3b68653b0
 /deepseek-ai-dsh-session-format-v4-to-v5/known-limitations-and-deferred-work:
-  en: 9675d5dbd37fe368
-  zh: f8c8eb493f8932ce
-/deepseek-ai-dsh-session-format-v4-to-v5/dev-note:
-  en: b75c8458928b72b9
-  zh: 003ba4e17b4b5269
+  en: 1c62aadbd61e5a88
+  zh: b6fde74e320d4b83
+/deepseek-ai-dsh-session-format-v4-to-v5/known-limitations-and-deferred-work/dev-note:
+  en: 0a1253c6f7b5e8b9
+  zh: 9f56528562c7c914

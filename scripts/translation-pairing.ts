@@ -145,6 +145,8 @@ export const TRANSLATION_SCOPE_GLOB_EXCLUDES = [
   '.artifacts/**',
   'python/sdk-runtime/src/deepseek_harness_runtime/runtime/**',
   'vendor/**',
+  // Local devflow artifacts: the runs/ tree is never tracked or published.
+  'runs/**',
 ]
 
 /** Whether a repository-relative path belongs to a dependency or generated tree. */

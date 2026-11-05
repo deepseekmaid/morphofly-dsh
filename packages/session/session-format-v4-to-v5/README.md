@@ -1,6 +1,6 @@
 ---
 description: "Complete V4-to-V5 Session conversion and native admission: Assistant streams leave the event log, settlement scalars stay, and the sidecar is owned by persistence."
-kind: "package-library"
+kind: "package-reference"
 ---
 
 # @deepseek-ai/dsh-session-format-v4-to-v5
@@ -144,14 +144,26 @@ Any other field, including a residual `stream`, is rejected. All non-settlement 
 <a id="model-experience"></a>
 ## Model Experience
 
-This library produces no model-facing text, tools, or prompts. Conversion preserves the model-visible `message` payload exactly, so a migrated Session reconstructs an identical model history.
+### Historical restoration
 
-<a id="known-limitations-and-deferred-work"></a>
+#### What the model sees
+
+Historical requests retain their recorded messages and model configuration. The [migration stage](src/migration.ts) removes only the timed stream and recomputes its two scalar summaries, so every message block a model saw is reconstructed unchanged.
+
+#### Token effect
+
+The conversion changes no request text or token-bearing data. `usage` is copied from the released settlement, and a stream-derived `usage` fallback fills an attempt that reported none.
+
+#### KV Cache effect
+
+The edge preserves the recorded request prefix exactly; provider cache availability and eviction remain outside this library.
+
 ## Known Limitations and Deferred Work
 
-The edge returns logical events only; it neither reads nor writes sidecar files. A caller that converts a stored V4 generation without a persistence layer that tees the removed streams loses the timed stream for that generation — persistence owns that guarantee. Fork and archive paths must copy or package `streams.v1/` themselves.
+- The edge returns logical events only; it neither reads nor writes sidecar files.
+- A caller that converts a stored V4 generation without a persistence layer that tees the removed streams loses the timed stream for that generation; persistence owns that guarantee.
+- Fork paths must copy `streams.v1/` from the source Session directory; export archives already package it.
 
-<a id="dev-note"></a>
-## Dev Note
+### Dev Note
 
 None.

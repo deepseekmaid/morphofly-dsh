@@ -281,8 +281,9 @@ export type RequestHeaderReason = 'initial' | 'resume' | 'change' | 'series'
 /**
  * The merge-extensible, append-only source of truth for an agent interaction.
  * Message history is derived from this log. Every event is lossless JSON and
- * sequence numbers stay contiguous. Assistant attempt events embed their exact
- * compact raw streams so persistence stores one durable settlement per attempt.
+ * sequence numbers stay contiguous. Assistant settlement events keep only the
+ * scalars synchronous folds read; persistence stores their exact compact raw
+ * streams in Session-local sidecars.
  */
 export interface SessionEventMap {
   /**

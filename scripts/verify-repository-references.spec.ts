@@ -108,7 +108,7 @@ describe('maintained repository reference policy', () => {
     ])
   })
 
-  it('accepts a fork release tag as provenance while still citing bare commits', () => {
+  it('accepts a fork release tag as a release name while still citing bare commits', () => {
     const hash = `${numericCommit}a`
     expect(findRepositoryReferences('doc.md', `tag: fork-v0.2.2-rc.1-${hash}`, new Set([hash]))).toEqual([])
     expect(findRepositoryReferences('doc.md', `tag: fork-v0.2.2-rc.1-${hash} commit ${hash}`, new Set([hash]))).toEqual([
