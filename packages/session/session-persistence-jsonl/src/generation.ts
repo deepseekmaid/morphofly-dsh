@@ -317,9 +317,7 @@ function zstdRowAt(bytes: Buffer, rowIndex: number, signal?: AbortSignal): Buffe
 }
 
 /** Read one settlement row's embedded stream payload, when that generation kept one. */
-function embeddedStreamOf(row: unknown): readonly AssistantStreamRecord[] | undefined {
-  if (typeof row !== 'object' || row === null || Array.isArray(row)) return undefined
-  const record = row as Record<string, unknown>
+function embeddedStreamOf(record: Readonly<Record<string, unknown>>): readonly AssistantStreamRecord[] | undefined {
   if (record['type'] !== 'assistant/message' && record['type'] !== 'assistant/attempt') return undefined
   const data = record['data']
   if (typeof data !== 'object' || data === null || Array.isArray(data)) return undefined
@@ -343,7 +341,7 @@ export function captureEmbeddedAssistantStream(
   const row = event as Record<string, unknown>
   const seq = row['seq']
   if (typeof seq !== 'number' || !Number.isSafeInteger(seq) || seq < 0) return
-  const stream = embeddedStreamOf(event)
+  const stream = embeddedStreamOf(row)
   if (stream === undefined) return
   into.set(SessionSeq(seq), stream)
 }
@@ -380,13 +378,14 @@ export async function readEmbeddedAssistantStream(
   } catch (error: unknown) {
     throw new Error(`historical generation row ${seq} is not valid JSON: "${path}"`, { cause: error })
   }
-  const rowSeq = typeof row === 'object' && row !== null && !Array.isArray(row)
-    ? (row as Record<string, unknown>)['seq']
-    : undefined
-  if (rowSeq !== seq) {
-    throw new Error(`historical generation row ${seq} identifies sequence ${String(rowSeq)}: "${path}"`)
+  if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+    throw new Error(`historical generation row ${seq} is not a JSON object: "${path}"`)
   }
-  const stream = embeddedStreamOf(row)
+  const record = row as Record<string, unknown>
+  if (record['seq'] !== seq) {
+    throw new Error(`historical generation row ${seq} identifies sequence ${String(record['seq'])}: "${path}"`)
+  }
+  const stream = embeddedStreamOf(record)
   if (stream === undefined) return undefined
   try {
     expandAssistantStream(stream)

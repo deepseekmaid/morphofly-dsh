@@ -1706,17 +1706,25 @@ describe('embedded Assistant stream helpers', () => {
     await expect(readEmbeddedAssistantStream(framed, 'zstd', SessionSeq(2))).resolves.toEqual(records)
     await expect(readEmbeddedAssistantStream(framed, 'zstd', SessionSeq(99))).resolves.toBeUndefined()
 
-    // A record split across frames exercises the incremental fragment buffer.
-    const split = join(root, 'split.v4.jsonl.zstd')
+    // The target record itself split across frames exercises the fragment buffer.
     const headerLine = line(header(4))
-    const rowLines = sourceRows.map(row => line(row))
-    const body = rowLines.join('')
-    const cut = body.indexOf('step/end')
+    const body = sourceRows.map(row => line(row)).join('')
+    const settlementAt = body.indexOf('"stream"')
+    const split = join(root, 'split.v4.jsonl.zstd')
     await writeFile(split, Buffer.concat([
-      await compressZstdFrame(headerLine + body.slice(0, cut)),
-      await compressZstdFrame(body.slice(cut)),
+      await compressZstdFrame(headerLine + body.slice(0, settlementAt + 3)),
+      await compressZstdFrame(body.slice(settlementAt + 3)),
     ]))
     await expect(readEmbeddedAssistantStream(split, 'zstd', SessionSeq(2))).resolves.toEqual(records)
+
+    // Resuming exactly on the record's newline exercises the empty-fragment arm.
+    const newlineSplit = join(root, 'newline-split.v4.jsonl.zstd')
+    const boundary = body.indexOf('\n', settlementAt)
+    await writeFile(newlineSplit, Buffer.concat([
+      await compressZstdFrame(headerLine + body.slice(0, boundary)),
+      await compressZstdFrame(body.slice(boundary)),
+    ]))
+    await expect(readEmbeddedAssistantStream(newlineSplit, 'zstd', SessionSeq(2))).resolves.toEqual(records)
 
     const empty = join(root, 'empty.jsonl.zstd')
     await writeFile(empty, Buffer.alloc(0))
@@ -1726,6 +1734,16 @@ describe('embedded Assistant stream helpers', () => {
 
   it('refuses a corrupt, mismatched, or invalid embedded row', async () => {
     const root = await tempRoot()
+    const scalar = join(root, 'scalar.jsonl')
+    await writeFile(scalar, [
+      line(header(4)),
+      line(sourceRows[0]),
+      line(sourceRows[1]),
+      '42\n',
+      line(sourceRows[3]),
+    ].join(''))
+    await expect(readEmbeddedAssistantStream(scalar, 'none', SessionSeq(2)))
+      .rejects.toThrow(/is not a JSON object/)
     const corrupt = join(root, 'corrupt.jsonl')
     await writeFile(corrupt, [
       line(header(4)),
