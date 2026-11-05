@@ -332,13 +332,15 @@ describe('dsh-subagent-dsh-sdk provider', () => {
     await ctx.fiber.dispose()
   })
 
-  it('keeps durable attempt text when a malformed final message prevents completion', async () => {
+  it('reports no text when a malformed final message prevents completion', async () => {
+    // V5 keeps the failed attempt's stream in the child's sidecar storage, so a
+    // parent that only receives session events has no durable attempt text.
     const ctx = await setup({ FAKE_MALFORMED_MESSAGE: '1', FAKE_TEXT: 'stream-only answer' })
     const run = await startExternalActivation(ctx, 'dsh-sdk', request())
     const result = await run.result
 
     expect(result.stopReason).toBe('error')
-    expect(text(result.output)).toBe('stream-only answer')
+    expect(text(result.output)).toBe('')
     await run.dispose()
     await ctx.fiber.dispose()
   })
@@ -357,15 +359,15 @@ describe('dsh-subagent-dsh-sdk provider', () => {
     await ctx.fiber.dispose()
   })
 
-  it('keeps durable attempt text when the terminal message is an empty usage-only step', async () => {
-    // A prior attempt retained its text without a surface message; the next
-    // max-tokens attempt commits only an empty usage anchor. The empty message
-    // is not Assistant output and must not erase the durable attempt fallback.
+  it('reports no text when the terminal message is an empty usage-only step', async () => {
+    // A prior attempt retained its text only in V5 sidecar storage; the next
+    // max-tokens attempt commits an empty usage anchor, so the parent-visible
+    // event stream carries no assistant text to fall back to.
     const ctx = await setup({ FAKE_EMPTY_MESSAGE: '1', FAKE_REASON_KIND: 'max-tokens' })
     const run = await startExternalActivation(ctx, 'dsh-sdk', request())
     const result = await run.result
     expect(result.stopReason).toBe('max-tokens')
-    expect(text(result.output)).toBe('hello from fake runtime')
+    expect(text(result.output)).toBe('')
     await run.dispose()
     await ctx.fiber.dispose()
   })
