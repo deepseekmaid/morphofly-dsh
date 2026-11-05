@@ -88,6 +88,80 @@ function embeddedRowStream(row: Readonly<Record<string, unknown>>): readonly Ass
   return data !== null && typeof data === 'object' && !Array.isArray(data) ? embeddedStream(data) : undefined
 }
 
+export type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
+
+/** One committed Assistant-stream fixture line: a settlement seq and its exact stream. */
+export interface AssistantStreamFixtureEntry {
+  /** Durable settlement event sequence the stream belongs to. */
+  readonly seq: number
+  /** Exact compact Assistant stream kept for that settlement. */
+  readonly stream: readonly AssistantStreamRecord[]
+}
+
+/**
+ * Parse one committed Assistant-stream fixture file (`*.streams.jsonl`).
+ *
+ * Session V5 keeps exact streams in Session-local storage; snapshot fixtures
+ * commit them separately from the event log as one `{ seq, stream }` line per
+ * settlement. Replay feeds the result to {@link AssistantStreamReader}.
+ * @param content - Complete UTF-8 fixture content.
+ * @param label - Diagnostic filename or path.
+ * @returns exact streams keyed by settlement sequence.
+ * @throws when a line is malformed, duplicates a seq, or carries an invalid stream.
+ */
+export function parseAssistantStreamFixture(
+  content: string,
+  label: string,
+): ReadonlyMap<number, readonly AssistantStreamRecord[]> {
+  const streams = new Map<number, readonly AssistantStreamRecord[]>()
+  for (const [index, line] of content.split(/\r?\n/).entries()) {
+    if (line.trim().length === 0) continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line) as unknown
+    } catch (error) {
+      throw new Error(`${label}: stream fixture line ${index + 1} contains invalid JSON`, { cause: error })
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`${label}: stream fixture line ${index + 1} must be a JSON object`)
+    }
+    const { seq, stream } = parsed as { seq?: unknown; stream?: unknown }
+    if (!Number.isSafeInteger(seq) || (seq as number) < 0 || Object.is(seq, -0)) {
+      throw new Error(`${label}: stream fixture line ${index + 1} seq must be a non-negative safe integer`)
+    }
+    if (!Array.isArray(stream)) {
+      throw new Error(`${label}: stream fixture line ${index + 1} stream must be an array`)
+    }
+    if (streams.has(seq as number)) {
+      throw new Error(`${label}: stream fixture line ${index + 1} duplicates settlement seq ${seq as number}`)
+    }
+    try {
+      expandAssistantStream(stream as readonly AssistantStreamRecord[])
+    } catch (error) {
+      throw new Error(`${label}: stream fixture line ${index + 1} carries an invalid Assistant stream`, { cause: error })
+    }
+    streams.set(seq as number, stream as readonly AssistantStreamRecord[])
+  }
+  return streams
+}
+
+/** Render committed Assistant-stream fixture text in settlement-seq order. */
+export function formatAssistantStreamFixture(
+  entries: Iterable<AssistantStreamFixtureEntry>,
+): string {
+  return [...entries]
+    .sort((left, right) => left.seq - right.seq)
+    .map(entry => JSON.stringify(entry))
+    .join('\n')
+}
+
+/** Build a reader over one committed stream fixture path, if the role has one. */
+function streamFixtureReader(path: string | undefined): AssistantStreamReader | undefined {
+  if (path === undefined || path.length === 0) return undefined
+  const streams = parseAssistantStreamFixture(readFileSync(path, 'utf8'), path)
+  return event => streams.get(event.seq)
+}
+
 /**
  * One recorded model call. `throw` may replay prefix chunks before failing;
  * `hang` models cancellation. Derived chunk entries come from ordinary model
@@ -203,6 +277,14 @@ export interface ReplayConfig {
    * with the explicit V5 sidecar limitation.
    */
   readAssistantStream?: AssistantStreamReader
+  /**
+   * Optional committed Assistant-stream fixture paths, parallel to the session
+   * roles in `file` then `childFiles` order (`''` when a role has none). Each
+   * file holds one `{ seq, stream }` line per settlement; the snapshot harness
+   * forwards the current-generation sidecar so a V5 replay input keeps its
+   * exact streams. Missing roles fall back to a fixture's embedded rows.
+   */
+  streamFiles?: readonly string[]
 }
 
 /**
@@ -826,7 +908,7 @@ function readOverrideDoc(value: unknown, file: string): ReplayOverrideDoc {
  */
 export function loadReplayScript(config: ReplayConfig): ReplayEntry[] {
   const fixture = readPrimaryFixture(config)
-  return resolveReplayScript(config, fixture)
+  return resolveReplayScript(config, fixture, streamFixtureReader(config.streamFiles?.[0]))
 }
 
 /** Read a primary JSONL unless a whole-script sidecar intentionally occupies the same path. */
@@ -839,11 +921,12 @@ function readPrimaryFixture(config: ReplayConfig): ParsedSessionFixture | undefi
 function resolveReplayScript(
   config: ReplayConfig,
   fixture: ParsedSessionFixture | undefined,
+  streamReader: AssistantStreamReader | undefined,
 ): ReplayEntry[] {
   if (config.overrideFile !== undefined && existsSync(config.overrideFile)) {
     const doc = readOverrideDoc(JSON.parse(readFileSync(config.overrideFile, 'utf8')) as unknown, config.overrideFile)
     if (Array.isArray(doc)) return doc
-    const script = deriveScriptFromFixture(config, fixture)
+    const script = deriveScriptFromFixture(config, fixture, streamReader)
     const derivedLength = script.length
     const seenIndexes = new Set<number>()
     for (const patch of doc.patches) {
@@ -861,7 +944,7 @@ function resolveReplayScript(
     }
     return script
   }
-  return deriveScriptFromFixture(config, fixture)
+  return deriveScriptFromFixture(config, fixture, streamReader)
 }
 
 /** Consult the caller's sidecar reader first, then the released fixture's recovered row streams. */
@@ -874,13 +957,20 @@ function mergedStreamReader(
 }
 
 /** Derive a script from an already migrated fixture, failing loud when it is absent. */
-function deriveScriptFromFixture(config: ReplayConfig, fixture: ParsedSessionFixture | undefined): ReplayEntry[] {
+function deriveScriptFromFixture(
+  config: ReplayConfig,
+  fixture: ParsedSessionFixture | undefined,
+  streamReader: AssistantStreamReader | undefined,
+): ReplayEntry[] {
   if (fixture === undefined) {
     throw new Error(`llm-replay: fixture not found: ${config.file} — run \`pnpm run test:snapshot:record\` first`)
   }
   return deriveReplayScript(
     fixture.events,
-    mergedStreamReader(config.readAssistantStream, fixture.readAssistantStream),
+    mergedStreamReader(
+      config.readAssistantStream,
+      mergedStreamReader(streamReader, fixture.readAssistantStream),
+    ),
   )
 }
 
@@ -893,7 +983,7 @@ function deriveScriptFromFixture(config: ReplayConfig, fixture: ParsedSessionFix
  */
 export function loadSessionScripts(config: ReplayConfig): SessionScript[] {
   const primaryFixture = readPrimaryFixture(config)
-  const primaryEntries = resolveReplayScript(config, primaryFixture)
+  const primaryEntries = resolveReplayScript(config, primaryFixture, streamFixtureReader(config.streamFiles?.[0]))
   // The override path replaces the derived script but carries no header; read
   // the header off the JSONL when it exists, else use a stable default so an
   // override-only fixture (header-less) still orders first as the primary.
@@ -902,7 +992,7 @@ export function loadSessionScripts(config: ReplayConfig): SessionScript[] {
     recordedId: primaryHeader.id, createdAt: primaryHeader.createdAt, entries: primaryEntries, primary: true,
   }
   const children: SessionScript[] = []
-  for (const childFile of config.childFiles ?? []) {
+  for (const [childIndex, childFile] of (config.childFiles ?? []).entries()) {
     if (!existsSync(childFile)) {
       throw new Error(`llm-replay: child fixture not found: ${childFile} — re-record the scenario`)
     }
@@ -916,7 +1006,10 @@ export function loadSessionScripts(config: ReplayConfig): SessionScript[] {
       createdAt: fixture.createdAt,
       entries: deriveReplayScript(
         ownEvents,
-        mergedStreamReader(config.readAssistantStream, fixture.readAssistantStream),
+        mergedStreamReader(
+          config.readAssistantStream,
+          mergedStreamReader(streamFixtureReader(config.streamFiles?.[childIndex + 1]), fixture.readAssistantStream),
+        ),
       ),
       primary: false,
     })
@@ -1218,6 +1311,8 @@ export interface Config {
   providers?: ReplayProviderConfig[]
   /** Optional per-chunk pacing delay in ms (see {@link ReplayConfig.paceMs}); absent keeps burst yield. */
   paceMs?: number
+  /** Committed Assistant-stream fixture paths per session role; defaults to `$DSH_SNAPSHOT_STREAM_FILES`. */
+  streamFiles?: readonly string[]
 }
 
 /** Whether a configured badge has non-blank literal or English-keyed text and a known tone. */
@@ -1292,10 +1387,15 @@ export function apply(ctx: Context, config: Config = {}): void {
   const childEnv = process.env.DSH_SNAPSHOT_CHILD_FILES
   const childFiles = config.childFiles
     ?? (childEnv !== undefined && childEnv.length > 0 ? childEnv.split(pathDelimiter) : [])
+  const streamEnv = process.env.DSH_SNAPSHOT_STREAM_FILES
+  // Role-parallel: an empty segment marks a role whose fixture keeps embedded streams.
+  const streamFiles = config.streamFiles
+    ?? (streamEnv !== undefined && streamEnv.length > 0 ? streamEnv.split(pathDelimiter) : [])
   installLlmReplay(ctx, {
     file,
     ...overrideFile !== undefined && overrideFile.length > 0 ? { overrideFile } : {},
     ...childFiles.length > 0 ? { childFiles } : {},
+    ...streamFiles.length > 0 ? { streamFiles } : {},
     ...config.providers !== undefined ? { providers: config.providers } : {},
     ...config.paceMs !== undefined ? { paceMs: config.paceMs } : {},
   })

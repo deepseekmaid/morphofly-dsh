@@ -148,7 +148,7 @@ These limits define when replay cannot stand in for a live model. They are curre
 
 - **First-call-order script binding assumes sequential delegation** — a cut that runs sibling subagents concurrently would bind live sessions to recorded scripts non-deterministically; a stronger keying is deferred until such a scenario exists.
 - **Only ordinary loop chunks and marked local compaction outputs are derivable** — a pure pre-chunk throw, a cancel/hang, or an unmarked external summarizer call needs the `replay.override.json` sidecar; replacement and patch forms affect only the primary session, and child scripts still derive from their logs.
-- **V5 replay needs the stream sidecar reader** — Session V5 keeps Assistant streams outside its settlement events. Replay still derives from pre-V5 fixture rows whose streams are embedded, and `ReplayConfig.readAssistantStream` supplies them for a V5 log, but a caller without sidecar storage access fails with `V5 replay requires a sidecar stream reader`; wiring that reader into the snapshot harness is deferred.
+- **V5 replay needs the stream sidecar reader** — Session V5 keeps Assistant streams outside its settlement events. Replay derives from pre-V5 fixture rows whose streams are embedded; for a V5 log it reads `ReplayConfig.streamFiles` (one committed `session.<role>.vN.streams.jsonl` per role) or an explicit `readAssistantStream` callback, and a caller without either fails with `V5 replay requires a sidecar stream reader`. The snapshot harness forwards committed sidecars through `$DSH_SNAPSHOT_STREAM_FILES`.
 
 <a id="dev-note"></a>
 ### Dev Note

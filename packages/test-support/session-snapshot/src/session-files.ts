@@ -24,6 +24,7 @@ export interface PersistedSessionFile {
 }
 
 const FIXTURE_FILE = /^session(?:\.([1-9]\d*))?(?:\.v([1-9]\d*))?\.jsonl$/u
+const STREAM_FIXTURE_FILE = /^session(?:\.([1-9]\d*))?(?:\.v([1-9]\d*))?\.streams\.jsonl$/u
 
 function nonNegativeSafeInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value < 0 || Object.is(value, -0)) {
@@ -47,6 +48,50 @@ export function sessionFixtureName(index: number, version: number): string {
 }
 
 /**
+ * Return the canonical Assistant-stream fixture filename for one role and generation.
+ *
+ * The sidecar commits the exact streams Session V5 keeps outside its event log
+ * as one `{ seq, stream }` line per settlement. Only the current writer
+ * generation writes this file; historical generations keep embedded rows.
+ * @param index - Parent `0` or a positive child/ordinal slot.
+ * @param version - Physical format generation; `0` is omitted.
+ * @returns The canonical sidecar JSONL filename.
+ */
+export function sessionStreamFixtureName(index: number, version: number): string {
+  return `${sessionFixtureName(index, version).slice(0, -'.jsonl'.length)}.streams.jsonl`
+}
+
+/**
+ * Parse one committed Assistant-stream fixture filename.
+ * @param name - Basename from a scenario directory.
+ * @returns Parsed role and generation, or `undefined` for an unrelated file.
+ */
+export function parseSessionStreamFixtureName(name: string): SessionFixtureFile | undefined {
+  const match = STREAM_FIXTURE_FILE.exec(name)
+  if (match === null) return undefined
+  const index = match[1] === undefined ? 0 : Number(match[1])
+  const version = match[2] === undefined ? 0 : Number(match[2])
+  return Number.isSafeInteger(index) && Number.isSafeInteger(version) ? { index, version, name } : undefined
+}
+
+/**
+ * Resolve the committed sidecar filename for every selected Session role.
+ * @param names - File basenames in one scenario directory.
+ * @param selectedSessionNames - Selected session fixture basenames in role order.
+ * @returns Role-parallel sidecar names, `undefined` for a role without one.
+ */
+export function sessionStreamFixtureNames(
+  names: readonly string[],
+  selectedSessionNames: readonly string[],
+): (string | undefined)[] {
+  const available = new Set(names.filter(name => parseSessionStreamFixtureName(name) !== undefined))
+  return selectedSessionNames.map((name) => {
+    const streamName = `${name.slice(0, -'.jsonl'.length)}.streams.jsonl`
+    return available.has(streamName) ? streamName : undefined
+  })
+}
+
+/**
  * Name the native-writer oracle for a retained historical replay role.
  * This expected output never participates in replay generation selection.
  * @param index - Parent `0` or a positive child/ordinal slot.
@@ -64,6 +109,7 @@ export function writerSnapshotName(index: number): string {
  * @returns Parsed role and generation, or `undefined` for an unrelated file.
  */
 export function parseSessionFixtureName(name: string): SessionFixtureFile | undefined {
+  if (parseSessionStreamFixtureName(name) !== undefined) return undefined
   const match = FIXTURE_FILE.exec(name)
   if (match === null) {
     if (name.startsWith('session') && name.endsWith('.jsonl')) {

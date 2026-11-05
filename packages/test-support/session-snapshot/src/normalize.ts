@@ -611,6 +611,48 @@ export function scrubSessionSnapshot(rawLog: string): string {
   }).join('\n')
 }
 
+/**
+ * Normalize one committed Assistant-stream fixture (`session.vN.streams.jsonl`).
+ *
+ * Session V5 keeps exact streams outside the event log, so a snapshot commits
+ * them as one `{ seq, stream }` line per settlement. Replay re-encodes chunks
+ * with fresh arrival clocks, so compact-stream clocks are zeroed like every
+ * compared Session log; the run's cwd is tokenized the same way as a Session
+ * fixture, while opaque provider values such as reasoning signatures stay
+ * regression-visible.
+ *
+ * @param raw - Raw sidecar fixture text.
+ * @param ctx - The run's volatile values to tokenize.
+ * @returns Stable sidecar fixture text, one compact record per line.
+ * @throws when a line is not a `{ seq, stream }` object.
+ */
+export function normalizeAssistantStreamFixture(raw: string, ctx: NormalizeContext): string {
+  const lines = raw.split('\n').filter(line => line.trim().length > 0)
+  return `${lines.map((line) => {
+    let value: unknown
+    try {
+      value = JSON.parse(line) as unknown
+    } catch (error) {
+      throw new Error('assistant-stream fixture line contains invalid JSON', { cause: error })
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('assistant-stream fixture line must be a JSON object')
+    }
+    const { seq, stream } = value as { seq?: unknown; stream?: unknown }
+    if (!Number.isSafeInteger(seq) || !Array.isArray(stream)) {
+      throw new Error('assistant-stream fixture line must carry { seq, stream }')
+    }
+    for (const member of stream) {
+      if (member === null || typeof member !== 'object' || Array.isArray(member)) continue
+      const timed = member as { time?: unknown; time0?: unknown; dt?: unknown }
+      if (typeof timed.time === 'number') timed.time = 0
+      if (typeof timed.time0 === 'number') timed.time0 = 0
+      if (Array.isArray(timed.dt)) timed.dt = timed.dt.map(() => 0)
+    }
+    return JSON.stringify(scrubValue({ seq, stream }, { ...ctx, sessionIds: [] }, 'canonical', 'preserve'))
+  }).join('\n')}\n`
+}
+
 /** Normalize service-owned feedback clocks without touching user-authored payloads. */
 function normalizeFeedbackClocks(record: Record<string, unknown>): void {
   if (record.type !== 'feedback/message-put' || record.data === null || typeof record.data !== 'object') return

@@ -36,6 +36,8 @@ import {
   type LaunchedAcpTestAgent,
 } from './launcher.ts'
 import { clearedProxyEnv } from '@deepseek-ai/dsh-http-proxy'
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm-replay'
+import { harvestAssistantStreams } from './assistant-streams.ts'
 import {
   assertPersistedSessionVersion,
   latestPersistedSessionPaths,
@@ -142,6 +144,12 @@ export interface HarvestedLog {
   parentSession?: string
   /** The full `.jsonl` file content. */
   content: string
+  /**
+   * Exact Assistant streams committed beside this log by the Session V5 writer,
+   * keyed by settlement sequence. Absent for a historical generation whose
+   * streams stay embedded in the log rows.
+   */
+  streams?: ReadonlyMap<number, readonly AssistantStreamRecord[]>
 }
 
 /** The result of running a scenario: raw stdout + the harvested session log(s). */
@@ -189,6 +197,12 @@ export interface RunOptions {
    * scenarios. Ignored in record mode (children are harvested, not replayed).
    */
   childFiles?: string[]
+  /**
+   * Committed Assistant-stream fixture paths parallel to the session roles in
+   * `fixtureFile` then `childFiles` order (`''` when a role has none), forwarded
+   * to `dsh-llm-replay` via `$DSH_SNAPSHOT_STREAM_FILES` as the V5 sidecar source.
+   */
+  streamFiles?: string[]
   /**
    * Optional `<scenario>/workspace/` directory whose contents are copied into
    * the generated cwd BEFORE the run — the standard way to seed files the agent
@@ -286,6 +300,9 @@ export async function runScenario(input: InputScript, opts: RunOptions): Promise
       ...opts.overrideFile !== undefined ? { DSH_SNAPSHOT_OVERRIDE: opts.overrideFile } : {},
       ...opts.childFiles !== undefined && opts.childFiles.length > 0
         ? { DSH_SNAPSHOT_CHILD_FILES: opts.childFiles.join(delimiter) }
+        : {},
+      ...opts.streamFiles !== undefined && opts.streamFiles.length > 0
+        ? { DSH_SNAPSHOT_STREAM_FILES: opts.streamFiles.join(delimiter) }
         : {},
     }
 
@@ -822,10 +839,12 @@ async function harvestSessionLogs(root: string): Promise<HarvestedLog[]> {
     /* v8 ignore next -- the generation validator above rejects header-less content. */
     const firstLine = content.split('\n').find(line => line.trim().length > 0) ?? '{}'
     const header = JSON.parse(firstLine) as { id?: unknown; createdAt?: unknown; parentSession?: unknown }
+    const streams = await harvestAssistantStreams(join(root, dirname(file)))
     logs.push({
       id: typeof header.id === 'string' ? header.id : '',
       createdAt: typeof header.createdAt === 'number' ? header.createdAt : 0,
       ...typeof header.parentSession === 'string' ? { parentSession: header.parentSession } : {},
+      ...streams === undefined ? {} : { streams },
       content,
     })
   }

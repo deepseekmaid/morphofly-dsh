@@ -148,7 +148,7 @@ parent agent 委托给进程内 subagent 的场景会为每个 Session 记录一
 
 - **首次调用顺序脚本绑定假设串行委托**——并发运行同级 subagent 的实现会非确定性地将实时会话绑定到已记录脚本；在这种场景出现前暂不实现更强的键控。
 - **只有普通 loop 分片与带标记的本地压缩输出才能派生**——在产生分片前直接抛出、取消/挂起，或未标记的外部摘要器调用场景需要 `replay.override.json` 伴随文件；替换与补丁两种形式都只影响主会话，子会话脚本仍从各自日志派生。
-- **V5 回放需要流伴随存储读取器**——Session V5 把 Assistant 流移出 settlement 事件。回放仍可从内嵌流的 V5 之前 fixture 行派生，并可用 `ReplayConfig.readAssistantStream` 为 V5 日志提供流，但没有伴随存储读取权限的调用方会明确收到 `V5 replay requires a sidecar stream reader`；把该读取器接入快照 harness 的工作尚未完成。
+- **V5 回放需要流伴随存储读取器**——Session V5 把 Assistant 流移出 settlement 事件。回放可从内嵌流的 V5 之前 fixture 行派生；对 V5 日志则读取 `ReplayConfig.streamFiles`（每个角色一个已提交的 `session.<role>.vN.streams.jsonl`）或调用方提供的 `readAssistantStream` 回调，两者都没有时明确收到 `V5 replay requires a sidecar stream reader`。快照 harness 通过 `$DSH_SNAPSHOT_STREAM_FILES` 转发已提交的伴随文件。
 
 <a id="dev-note"></a>
 ### 开发备注

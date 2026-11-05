@@ -32,6 +32,8 @@ import {
   loadReplayScript,
   loadSessionScripts,
   name,
+  formatAssistantStreamFixture,
+  parseAssistantStreamFixture,
   parseSessionHeader,
   parseSessionLog,
   prepareSessionSnapshotFixtureForComparison,
@@ -1010,6 +1012,27 @@ describe('deriveReplayScript', () => {
       .toThrow(/V5 replay requires a sidecar stream reader for assistant\/message at seq 1/)
   })
 
+  it('round-trips committed Assistant-stream fixture text in settlement order', () => {
+    const text = formatAssistantStreamFixture([
+      { seq: 5, stream: streamRecords(TEXT_CHUNKS) },
+      { seq: 2, stream: streamRecords(TEXT_CHUNKS) },
+    ])
+    const streams = parseAssistantStreamFixture(text, 'session.v5.streams.jsonl')
+    expect([...streams.keys()]).toEqual([2, 5])
+    expect(streams.get(2)).toEqual(streamRecords(TEXT_CHUNKS))
+  })
+
+  it.each([
+    ['invalid JSON', '{"seq":1,"stream":[]'],
+    ['non-object line', '[]'],
+    ['missing seq', '{"stream":[]}'],
+    ['duplicate seq', '{"seq":1,"stream":[]}\n{"seq":1,"stream":[]}\n'],
+    ['invalid stream', '{"seq":1,"stream":[{"type":"unsupported"}]}\n'],
+  ])('rejects a malformed Assistant-stream fixture: %s', (_label, text) => {
+    expect(() => parseAssistantStreamFixture(text, 'session.v5.streams.jsonl'))
+      .toThrow(/session\.v5\.streams\.jsonl: stream fixture line/)
+  })
+
   it('expands V5 settlements through the supplied sidecar stream reader', () => {
     const events = [v5StreamEvent(1, 1, 1, TEXT_CHUNKS), v5StreamEvent(2, 1, 2, TEXT_CHUNKS)]
     const streams = new Map(events.map(event => [event.seq, streamRecords(TEXT_CHUNKS)] as const))
@@ -1243,6 +1266,21 @@ describe('deriveReplayScript', () => {
 })
 
 describe('loadReplayScript', () => {
+  it('derives a V5 fixture from a committed Assistant-stream fixture file', () => {
+    const events: SessionEvent[] = [
+      { type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } },
+      { type: 'step/start', seq: SessionSeq(1), time: 0, data: { turn: 1, step: 1 } },
+      v5StreamEvent(2, 1, 1, TEXT_CHUNKS),
+      { type: 'step/end', seq: SessionSeq(3), time: 0, data: { turn: 1, step: 1 } },
+      { type: 'turn/end', seq: SessionSeq(4), time: 0, data: { turn: 1, reason: { kind: 'completed' } } },
+    ]
+    writeFileSync(file, sessionJsonl(events, { version: SESSION_FORMAT_VERSION }), 'utf8')
+    const streamFile = join(dir, 'session.v5.streams.jsonl')
+    writeFileSync(streamFile, formatAssistantStreamFixture([{ seq: 2, stream: streamRecords(TEXT_CHUNKS) }]), 'utf8')
+    expect(loadReplayScript({ file, streamFiles: [streamFile] }))
+      .toEqual([{ kind: 'chunks', chunks: TEXT_CHUNKS }])
+  })
+
   it('derives a V5 fixture only with an explicit sidecar stream reader', () => {
     const events: SessionEvent[] = [
       { type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } },

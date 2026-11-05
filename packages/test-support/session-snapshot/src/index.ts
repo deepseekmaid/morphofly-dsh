@@ -40,6 +40,7 @@ export {
 } from './launcher.ts'
 export {
   extractSnapshotSpillPaths,
+  normalizeAssistantStreamFixture,
   normalizeSessionFormatMetadata,
   normalizeSessionLog,
   normalizeSessionSnapshot,
@@ -73,16 +74,28 @@ export {
   type SnapshotWorkspaceManifest,
 } from './manifest.ts'
 export {
+  ASSISTANT_STREAM_DIRECTORY,
+  assertAssistantStreamFixtureCoverage,
+  harvestAssistantStreams,
+  renderAssistantStreamFixture,
+  sessionFixtureHasAssistantSettlement,
+  writeAssistantStreamFixture,
+  type AssistantStreamReplacement,
+} from './assistant-streams.ts'
+export {
   assertPersistedSessionVersion,
   assertSessionFixtureVersion,
   latestPersistedSessionPaths,
   parsePersistedSessionFilename,
   parseSessionFixtureName,
+  parseSessionStreamFixtureName,
   persistedSessionFilename,
   sessionFixtureFiles,
   sessionFixtureName,
   sessionFixtureNames,
   sessionHeaderVersion,
+  sessionStreamFixtureName,
+  sessionStreamFixtureNames,
   writerSnapshotName,
   type PersistedSessionFile,
   type SessionFixtureFile,

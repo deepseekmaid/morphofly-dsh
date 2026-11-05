@@ -18,6 +18,8 @@ import {
   assertSessionFixtureVersion,
   captureExpectedWorkspaceSnapshot,
   captureWorkspaceSnapshot,
+  harvestAssistantStreams,
+
   fixtureContext,
   formatSystemPromptSnapshot,
   formatToolSchemasSnapshot,
@@ -40,6 +42,8 @@ import {
   sessionFixtureName,
   systemPromptPrecedesRequests,
   sessionFixtureNames,
+  sessionStreamFixtureNames,
+  writeAssistantStreamFixture,
   sessionHeaderVersion,
   writerSnapshotName,
   snapshotSpillRoot,
@@ -98,6 +102,8 @@ interface HeadlessScenario {
 interface SessionLog {
   readonly content: string
   readonly header: JsonObject
+  /** Exact Assistant streams committed beside this log, keyed by settlement sequence. */
+  readonly streams?: ReadonlyMap<number, readonly import('@deepseek-ai/dsh-llm').AssistantStreamRecord[]>
 }
 
 /** Keep the cwd text priced by compaction independent of the platform's temporary-root length. */
@@ -206,7 +212,8 @@ async function persistedSessions(cwd: string): Promise<SessionLog[]> {
   const logs = await Promise.all(files.map(async (file): Promise<SessionLog> => {
     const content = await readFile(join(root, file), 'utf8')
     expect(assertPersistedSessionVersion(basename(file), content), `${file}: current writer`).toBe(SESSION_FORMAT_VERSION)
-    return { content, header: headerOf(content) }
+    const streams = await harvestAssistantStreams(join(root, dirname(file)))
+    return { content, header: headerOf(content), ...streams === undefined ? {} : { streams } }
   }))
   // Siblings bind to fixture roles by catalog publication order; concurrent
   // provider startup can publish an older Session after a newer one.
@@ -275,6 +282,18 @@ async function writeSessionFixtures(
   })
   const output = redactSessionSnapshotIds(stabilizeFixtureMessageIds(fresh, prior))
   await Promise.all(output.map((content, index) => writeFile(join(scenario.dir, names[index] as string), content)))
+  // Only a canonical current-generation fixture owns a stream sidecar; a
+  // retained historical role writes a writer-output oracle instead.
+  if (scenario.manifest.sessionFormat === undefined) {
+    await Promise.all(actualLogs.map((log, index) => writeAssistantStreamFixture(
+      scenario.dir,
+      index,
+      sessionHeaderVersion(log.content, `harvested Session ${index}`),
+      log.streams,
+      ctx,
+      replacements,
+    )))
+  }
   return output
 }
 
@@ -449,16 +468,33 @@ function stderrFromSession(log: string): string {
     }
     if (!started) continue
     const data = record.data as JsonObject | undefined
-    if ((record.type === 'assistant/message' || record.type === 'assistant/attempt')
-      && Array.isArray(data?.stream)) {
-      for (const entry of data.stream) {
-        if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
-          throw new Error('headless snapshot embedded stream has an invalid entry')
+    if (record.type === 'assistant/message' || record.type === 'assistant/attempt') {
+      if (Array.isArray(data?.stream)) {
+        for (const entry of data.stream) {
+          if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+            throw new Error('headless snapshot embedded stream has an invalid entry')
+          }
+          const streamRecord = entry as JsonObject
+          consume(streamRecord.type, streamRecord)
         }
-        const streamRecord = entry as JsonObject
-        consume(streamRecord.type, streamRecord)
+        close()
+        continue
       }
-      close()
+      // Session V5 keeps no embedded stream: the committed message content is
+      // the only record of what the model emitted for this settlement.
+      const message = data?.message as JsonObject | undefined
+      const content = message?.content
+      if (record.type === 'assistant/message' && Array.isArray(content)) {
+        for (const block of content) {
+          if (block === null || typeof block !== 'object' || Array.isArray(block)) {
+            throw new Error('headless snapshot assistant content has an invalid block')
+          }
+          const typed = block as JsonObject
+          if (typed.type === 'reasoning' && typeof typed.text === 'string') appendReasoning(typed.text)
+          else if (typed.type === 'text' || typed.type === 'tool-call') close()
+        }
+        close()
+      }
       continue
     }
     consume(record.type, data)
@@ -1401,6 +1437,8 @@ describe('headless recorded-session snapshots', () => {
       let finalWorkspace: WorkspaceSnapshotEntry[] | undefined
       const spillRoot = await mkdtemp(join(tmpdir(), 'acp-snap-spill-'))
       const fixturePath = join(scenario.dir, fixtureFiles[0] ?? sessionFixtureName(0, SESSION_FORMAT_VERSION))
+      const committedStreamFiles = replaying
+        ? sessionStreamFixtureNames(await readdir(scenario.dir), fixtureFiles) : []
       const locatorRoot = snapshotSpillRoot(fixturePath)
       const mcpDemo = scenario.name === 'plugin-manager-mcp' || scenario.name === 'mcp-template-error'
         ? await startHttpMcpFixture({ rejectToolCalls: scenario.name === 'mcp-template-error' }) : undefined
@@ -1437,6 +1475,12 @@ describe('headless recorded-session snapshots', () => {
             DSH_SNAPSHOT_FILE: fixturePath,
             ...(replaying && fixtureFiles.length > 1
               ? { DSH_SNAPSHOT_CHILD_FILES: fixtureFiles.slice(1).map(file => join(scenario.dir, file)).join(delimiter) }
+              : {}),
+            ...(replaying && committedStreamFiles.some(name => name !== undefined)
+              ? {
+                  DSH_SNAPSHOT_STREAM_FILES: committedStreamFiles
+                    .map(name => name === undefined ? '' : join(scenario.dir, name)).join(delimiter),
+                }
               : {}),
             ...(replaying && scenario.manifest.replay?.override === true
               ? { DSH_SNAPSHOT_OVERRIDE: join(scenario.dir, 'replay.override.json') }
