@@ -11,7 +11,7 @@ import { assertReleasedV4Header, restoreReleasedV4Artifact } from '@deepseek-ai/
 /** Published V5 settlement payloads: the stream moved to a Session-local sidecar. */
 const SETTLEMENT_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
   'assistant/message': new Set(['turn', 'step', 'message', 'usage', 'interrupted', 'firstTokenTime']),
-  'assistant/attempt': new Set(['turn', 'step', 'usage']),
+  'assistant/attempt': new Set(['turn', 'step', 'usage', 'firstTokenTime']),
 }
 
 /**
@@ -43,8 +43,11 @@ export function assertReleasedV5Settlement(type: string, data: unknown): void {
   if (type === 'assistant/message' && data['firstTokenTime'] !== undefined) {
     sessionFormatCount(data['firstTokenTime'], 'format v5 assistant/message firstTokenTime')
   }
-  if (type === 'assistant/attempt' && data['usage'] !== undefined) {
-    assertReleasedV5Usage(data['usage'])
+  if (type === 'assistant/attempt') {
+    if (data['usage'] !== undefined) assertReleasedV5Usage(data['usage'])
+    if (data['firstTokenTime'] !== undefined) {
+      sessionFormatCount(data['firstTokenTime'], 'format v5 assistant/attempt firstTokenTime')
+    }
   }
 }
 

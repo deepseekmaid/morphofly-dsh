@@ -75,14 +75,15 @@ class ReleasedV4ToV5Stage implements SessionFormatMigrationStage {
   }
 
   finish(): number {
-    const cut = this.seeded ? this.derivedCut : 0
-    if (this.seeded && cut === undefined) {
+    if (!this.seeded) return 0
+    const cut = this.derivedCut
+    if (cut === undefined) {
       throw new SessionFormatError('format v4 seeded header lacks its inherited end-seed marker')
     }
     if (this.sourceInheritedEventCount !== undefined && cut !== this.sourceInheritedEventCount) {
       throw new SessionFormatError('format v4 inherited cut disagrees with its source marker')
     }
-    return cut ?? 0
+    return cut
   }
 
   private migrate(event: SessionFormatEvent): SessionFormatEvent {
@@ -110,11 +111,13 @@ function migrateAssistantMessage(event: SessionFormatEvent): SessionFormatJsonOb
 
 function migrateAssistantAttempt(event: SessionFormatEvent): SessionFormatJsonObject {
   const data = settlementData(event, ATTEMPT_FIELDS)
-  requireReleasedStream(event, data)
+  const stream = requireReleasedStream(event, data)
   const migrated: Record<string, SessionFormatJsonValue> = {}
   for (const key of ['turn', 'step'] as const) migrated[key] = requireField(event, data, key)
-  const usage = lastStreamUsage(data['stream'])
+  const usage = lastStreamUsage(stream as readonly AssistantStreamRecord[])
   if (usage !== undefined) migrated['usage'] = usage
+  const firstTokenTime = assistantStreamFirstTokenTime(stream as readonly AssistantStreamRecord[])
+  if (firstTokenTime !== undefined) migrated['firstTokenTime'] = firstTokenTime
   return migrated
 }
 
@@ -155,6 +158,7 @@ function requireReleasedStream(
   try {
     expandAssistantStream(stream as readonly AssistantStreamRecord[])
   } catch (error: unknown) {
+    /* v8 ignore next -- expandAssistantStream rejects with a TypeError per its contract; the fallback is defensive. */
     const detail = error instanceof Error ? error.message : String(error)
     throw new SessionFormatUnsupportedMigrationError(
       `format v4 ${event.type} stream is invalid at seq ${event.seq}: ${detail}`,
@@ -163,16 +167,11 @@ function requireReleasedStream(
   return stream
 }
 
-function lastStreamUsage(stream: SessionFormatJsonValue | undefined): SessionFormatJsonValue | undefined {
-  if (!Array.isArray(stream)) return undefined
+function lastStreamUsage(stream: readonly AssistantStreamRecord[]): SessionFormatJsonValue | undefined {
   for (let index = stream.length - 1; index >= 0; index -= 1) {
     const record = stream[index]
-    if (!isSessionFormatJsonObject(record) || record['type'] !== 'chunk') continue
-    const chunk = record['chunk']
-    if (!isSessionFormatJsonObject(chunk) || chunk['type'] !== 'usage') continue
-    const usage = chunk['usage']
-    if (usage === undefined) continue
-    return snapshotSessionFormatJson(usage, 'format v4 assistant/attempt usage')
+    if (record === undefined || record.type !== 'chunk' || record.chunk.type !== 'usage') continue
+    return snapshotSessionFormatJson(record.chunk.usage, 'format v4 assistant/attempt usage')
   }
   return undefined
 }

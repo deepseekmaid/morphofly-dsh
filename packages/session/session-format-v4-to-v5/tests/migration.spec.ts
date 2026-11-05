@@ -81,9 +81,9 @@ describe('V4 to V5 settlement transformation', () => {
     expect(Object.hasOwn(data, 'stream')).toBe(false)
   })
 
-  it('carries attempt usage out of the removed stream', () => {
+  it('carries attempt usage and first-token latency out of the removed stream', () => {
     const attempt: SessionFormatEvent = { type: 'assistant/attempt', seq: 0, time: 300, data: { turn: 1, step: 1, stream: jsonStream(stream) } }
-    expect(migrate([attempt]).events[0]!.data).toEqual({ turn: 1, step: 1, usage })
+    expect(migrate([attempt]).events[0]!.data).toEqual({ turn: 1, step: 1, usage, firstTokenTime: 120 })
   })
 
   it('omits attempt usage when the stream has no usage chunk', () => {
@@ -91,7 +91,7 @@ describe('V4 to V5 settlement transformation', () => {
       { type: 'chunk', time: 120, chunk: { type: 'text-delta', index: 0, text: 'Hello' } },
     ]
     const attempt: SessionFormatEvent = { type: 'assistant/attempt', seq: 0, time: 300, data: { turn: 1, step: 1, stream: jsonStream(bare) } }
-    expect(migrate([attempt]).events[0]!.data).toEqual({ turn: 1, step: 1 })
+    expect(migrate([attempt]).events[0]!.data).toEqual({ turn: 1, step: 1, firstTokenTime: 120 })
   })
 
   it('preserves every other event byte-identically', () => {
@@ -147,6 +147,54 @@ describe('V4 to V5 settlement transformation', () => {
 
   it('refuses a settlement stream that fails released admission', () => {
     expect(() => migrate([settlement(0, { stream: [{ type: 'bogus' }] })])).toThrow()
+  })
+
+
+  it('transforms compact runs through the same settlement admission', () => {
+    const current = stage()
+    const output = new SessionFormatEventCollector()
+    const run = { runType: 'plugin:test/run', firstSeq: 0, eventCount: 1, expand: () => [settlement(0)] }
+    current.transformRun(run, output)
+    expect(output.values).toHaveLength(1)
+    expect(Object.hasOwn(payload(output.values[0]!), 'stream')).toBe(false)
+  })
+
+  it('refuses an inherited seed marker on an unseeded Session', () => {
+    const marker: SessionFormatEvent = { type: 'session/end-seed', seq: 0, time: 1, data: { inherited: true } }
+    expect(() => migrate([marker])).toThrow('unseeded Session contains an inherited end-seed marker')
+  })
+
+  it('requires a seeded Session to expose its inherited seed marker', () => {
+    expect(() => migrate([], { ...header, isSeeded: true })).toThrow('lacks its inherited end-seed marker')
+  })
+
+  it('refuses an inherited cut that disagrees with the source marker', () => {
+    const seeded = { ...header, isSeeded: true }
+    const rows: SessionFormatEvent[] = [
+      { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
+      { type: 'session/end-seed', seq: 1, time: 2, data: { inherited: true } },
+    ]
+    expect(() => migrate(rows, seeded, 0)).toThrow('inherited cut disagrees with its source marker')
+  })
+
+  it('omits attempt first-token latency when the stream carries no token', () => {
+    const tokenless: readonly AssistantStreamRecord[] = [
+      { type: 'chunk', time: 100, chunk: { type: 'usage', usage } },
+    ]
+    const attempt: SessionFormatEvent = { type: 'assistant/attempt', seq: 0, time: 300, data: { turn: 1, step: 1, stream: jsonStream(tokenless) } }
+    expect(migrate([attempt]).events[0]!.data).toEqual({ turn: 1, step: 1, usage })
+  })
+
+  it('keeps a message without usage or interruption free of those fields', () => {
+    const data = payload(migrate([settlement(0, { usage: undefined, interrupted: undefined })]).events[0]!)
+    expect(Object.hasOwn(data, 'usage')).toBe(false)
+    expect(Object.hasOwn(data, 'interrupted')).toBe(false)
+  })
+
+  it('refuses a non-object settlement payload and a missing required field', () => {
+    expect(() => migrate([{ type: 'assistant/message', seq: 0, time: 1, data: 4 }])).toThrow('payload must be an object')
+    expect(() => migrate([{ type: 'assistant/message', seq: 0, time: 1, data: { turn: 1, step: 1, stream: jsonStream(stream) } }]))
+      .toThrow('lacks required field message')
   })
 
   it('refuses unexpected settlement fields', () => {
