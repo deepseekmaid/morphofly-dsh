@@ -2034,15 +2034,9 @@ describe('loadSessionScripts', () => {
       id: 'child', createdAt: 200, seedLength: 6, version: 0,
     }), 'utf8')
 
-    // Legacy chunk rows carry no settlement stream after V5 migration, so the
-    // sidecar a V5 store would hold has to be supplied by the caller.
-    expect(() => loadSessionScripts({ file: f, childFiles: [childPath] }))
-      .toThrow(/V5 replay requires a sidecar stream reader/)
-    const scripts = loadSessionScripts({
-      file: f,
-      childFiles: [childPath],
-      readAssistantStream: event => event.data.turn === 2 ? streamRecords(childChunks) : undefined,
-    })
+    // V0/V1 chunk rows are recovered through the historical V3 representation,
+    // so a released fixture derives without a sidecar reader.
+    const scripts = loadSessionScripts({ file: f, childFiles: [childPath] })
     // The child script is ONLY the child's own model call — the parent's seeded
     // chunk is gone.
     expect(scripts[1]?.entries).toEqual([{ kind: 'chunks', chunks: childChunks }])

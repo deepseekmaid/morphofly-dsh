@@ -16,6 +16,7 @@ import { SESSION_FORMAT_VERSION, SessionLogOffset, type SessionEvent } from '@de
 import type { SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
 import {
   createSessionFormatCatalogWithChildren,
+  historicalSessionFormatCatalog,
   SessionFormatUnsupportedMigrationError,
   sessionFormatCatalog,
 } from '@deepseek-ai/dsh-session-format-catalog'
@@ -346,6 +347,11 @@ function parseSessionFixture(text: string): ParsedSessionFixture {
   // events; keep them in row order so the migrated settlements can reclaim
   // them (migrations may renumber sequences as they insert events).
   const embeddedStreams: (readonly AssistantStreamRecord[] | undefined)[] = []
+  // V0/V1 rows carry raw chunk events instead of settlements, so no row stream
+  // exists to collect. Restore the same rows through the historical V3 catalog
+  // to recover the streams the V1-to-V2 edge synthesizes; V3 and V5 settlements
+  // share their sequence and order, which keys the recovered streams.
+  let releasedRestore: ReturnType<typeof historicalSessionFormatCatalog.createRestore> | undefined
   let bodyKind: 'complete' | 'projected' | undefined
   let nextSeq = 0
   for (const [index, line] of text.split(/\r?\n/).entries()) {
@@ -364,13 +370,27 @@ function parseSessionFixture(text: string): ParsedSessionFixture {
     if (restore === undefined) {
       headerLineNumber = lineNumber
       sourceHeader = recordValue
+      const normalizedHeader = normalizeProjectedHeader(recordValue)
       try {
-        restore = createSessionFormatCatalogWithChildren([]).createRestore(normalizeProjectedHeader(recordValue), {
+        restore = createSessionFormatCatalogWithChildren([]).createRestore(normalizedHeader, {
           recovery: 'strict',
           validation: 'current',
         })
       } catch (error: unknown) {
         throw fixtureFormatError(error, lineNumber, [], [])
+      }
+      const sourceVersion = typeof normalizedHeader['version'] === 'number' ? normalizedHeader['version'] : 0
+      if (sourceVersion <= 1) {
+        try {
+          releasedRestore = historicalSessionFormatCatalog.createRestore(normalizedHeader, {
+            recovery: 'strict',
+            validation: 'current',
+          })
+        } catch {
+          // Pre-V3 recovery is best-effort: a fixture the current catalog accepts
+          // still parses, and replay then reports the V5 sidecar limitation.
+          releasedRestore = undefined
+        }
       }
       continue
     }
@@ -405,15 +425,51 @@ function parseSessionFixture(text: string): ParsedSessionFixture {
     } catch (error: unknown) {
       throw fixtureFormatError(error, headerLineNumber as number, rowLines, eventLines, rowLines.length - 1)
     }
+    if (releasedRestore !== undefined) {
+      try {
+        releasedRestore.decodeRow(record)
+      } catch {
+        // Keep the accepted current catalog result; replay reports the missing
+        // V5 sidecar explicitly instead of failing the fixture parse.
+        releasedRestore = undefined
+      }
+    }
   }
   if (restore === undefined || sourceHeader === undefined || headerLineNumber === undefined) {
     throw new Error('session snapshot must start with a session header')
   }
   try {
-    return parsedSessionFixture(restore.finish(), sourceHeader, embeddedStreams)
+    return parsedSessionFixture(restore.finish(), sourceHeader, embeddedStreams, releasedStreams(releasedRestore))
   } catch (error: unknown) {
     throw fixtureFormatError(error, headerLineNumber, rowLines, eventLines)
   }
+}
+
+/**
+ * Recover settlement streams from the released V3 representation of a V0/V1 fixture.
+ * @param restore - historical-chain restore fed the same physical rows, when it accepted them.
+ * @returns exact streams keyed by settlement sequence; empty when unchanged legacy messages
+ *   carried no stream records.
+ */
+function releasedStreams(
+  restore: ReturnType<typeof historicalSessionFormatCatalog.createRestore> | undefined,
+): ReadonlyMap<number, readonly AssistantStreamRecord[]> | undefined {
+  if (restore === undefined) return undefined
+  let events: readonly { type: string; seq: number; data?: unknown }[]
+  try {
+    events = restore.finish().events as unknown as readonly { type: string; seq: number; data?: unknown }[]
+  } catch {
+    return undefined
+  }
+  const streams = new Map<number, readonly AssistantStreamRecord[]>()
+  for (const event of events) {
+    if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') continue
+    const data = event.data
+    if (data === null || typeof data !== 'object') continue
+    const stream = embeddedStream(data)
+    streams.set(event.seq, stream ?? [])
+  }
+  return streams.size === 0 ? undefined : streams
 }
 
 /** Materialize the common replay view from a migrated artifact. */
@@ -421,19 +477,24 @@ function parsedSessionFixture(
   artifact: ParsedSessionFixture['artifact'],
   sourceHeader: Readonly<Record<string, unknown>>,
   embeddedStreams: readonly (readonly AssistantStreamRecord[] | undefined)[],
+  releasedStreams: ReadonlyMap<number, readonly AssistantStreamRecord[]> | undefined,
 ): ParsedSessionFixture {
   const events = [...artifact.events] as unknown as SessionEvent[]
   const settlements = events.filter(event => event.type === 'assistant/message' || event.type === 'assistant/attempt')
   // One released settlement row becomes exactly one migrated settlement event;
   // an equal count means row order is settlement order. Legacy chunk logs
-  // synthesize settlements that had no row stream, so they stay unclaimed and
-  // derivation reports the V5 sidecar limitation instead of guessing.
+  // synthesize settlements that had no row stream, so their streams come from
+  // the released V3 representation instead; both fall back to the explicit V5
+  // sidecar limitation when neither source supplies a stream.
   const streamsBySeq = new Map<number, readonly AssistantStreamRecord[]>()
   if (settlements.length === embeddedStreams.length) {
     for (const [index, event] of settlements.entries()) {
       const stream = embeddedStreams[index]
       if (stream !== undefined) streamsBySeq.set(event.seq, stream)
     }
+  }
+  for (const [seq, stream] of releasedStreams ?? []) {
+    if (!streamsBySeq.has(seq)) streamsBySeq.set(seq, stream)
   }
   return {
     id: artifact.header.id,
