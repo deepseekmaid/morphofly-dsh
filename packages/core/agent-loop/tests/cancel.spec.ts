@@ -8,6 +8,7 @@
  */
 import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { ToolCallId, createUserMessage, expandAssistantStream } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -20,6 +21,20 @@ import AgentRegistry, { type Agent, type AgentCancelCause } from '@deepseek-ai/d
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { MockAdapter, textResponse, toolCallResponse } from './mock-adapter.ts'
+
+/**
+ * Capture the sidecar stream each settlement carries beside its event.
+ * @param ctx - harness context whose sessions publish settlement events.
+ * @returns streams keyed by the committed event sequence.
+ */
+function captureCarriedStreams(ctx: Context): Map<number, readonly AssistantStreamRecord[]> {
+  const streams = new Map<number, readonly AssistantStreamRecord[]>()
+  ctx.on('session/event', (session, event) => {
+    const stream = session.takeAssistantStream(event.seq)
+    if (stream !== undefined) streams.set(event.seq, stream)
+  })
+  return streams
+}
 
 function driverDone(agent: Agent): Promise<void> {
   return (agent as Agent & { done: Promise<void> }).done
@@ -575,6 +590,7 @@ describe('Agent.cancel()', () => {
     const adapter = new MockAdapter(['hang', textResponse('after')])
     const ctx = await harness(adapter)
     const agent = await ctx.agentLoop.create(SessionId('partial-finalize'), { provider: 'mock', model: 'mock' })
+    const carried = captureCarriedStreams(ctx)
 
     send(agent, 'go')
     await new Promise(r => setTimeout(r, 30))
@@ -587,11 +603,13 @@ describe('Agent.cancel()', () => {
     expect(message?.type === 'assistant/message' ? message.data.message.content : undefined)
       .toEqual([{ type: 'text', text: 'partial' }])
     expect(message?.type === 'assistant/message' ? message.data.interrupted : undefined).toBe(true)
-    expect(message?.type === 'assistant/message'
-      ? expandAssistantStream(message.data.stream).some(member => (
+    const carriedStream = message === undefined ? undefined : carried.get(message.seq)
+    expect(carriedStream === undefined
+      ? false
+      : expandAssistantStream(carriedStream).some(member => (
         member.chunk.type === 'text-delta' && member.chunk.text === 'partial'
-      ))
-      : false).toBe(true)
+      )),
+    ).toBe(true)
     expect(message?.sourceEventSeqs).toBeUndefined()
     const types = agent.session.snapshotEvents().map(e => e.type)
     expect(types.indexOf('assistant/message')).toBeLessThan(types.indexOf('step/end'))
@@ -724,6 +742,7 @@ describe('Agent.cancel()', () => {
     ])
     const ctx = await harness(adapter)
     const agent = await ctx.agentLoop.create(SessionId('retry-discards-content'), { provider: 'mock', model: 'mock' })
+    const carried = captureCarriedStreams(ctx)
     ctx.on('agent/request-error', async () => ({ kind: 'retry' as const }))
 
     send(agent, 'go')
@@ -736,16 +755,20 @@ describe('Agent.cancel()', () => {
       .toEqual([{ type: 'text', text: 'recovered' }])
     expect(message.type === 'assistant/message' ? message.data.interrupted : undefined).toBeUndefined()
     const failed = agent.session.snapshotEvents().find(e => e.type === 'assistant/attempt')
-    expect(failed?.type === 'assistant/attempt'
-      ? expandAssistantStream(failed.data.stream).some(member => (
+    const failedStream = failed === undefined ? undefined : carried.get(failed.seq)
+    expect(failedStream === undefined
+      ? false
+      : expandAssistantStream(failedStream).some(member => (
         member.chunk.type === 'text-delta' && member.chunk.text === 'doomed partial'
-      ))
-      : false).toBe(true)
-    expect(message.type === 'assistant/message'
-      ? expandAssistantStream(message.data.stream).some(member => (
+      )),
+    ).toBe(true)
+    const messageStream = carried.get(message.seq)
+    expect(messageStream === undefined
+      ? true
+      : expandAssistantStream(messageStream).some(member => (
         member.chunk.type === 'text-delta' && member.chunk.text === 'doomed partial'
-      ))
-      : true).toBe(false)
+      )),
+    ).toBe(false)
   })
 
   it('retains a partial attempt when stream middleware rejects without cancellation', async () => {
@@ -756,6 +779,7 @@ describe('Agent.cancel()', () => {
     ]])
     const ctx = await harness(adapter)
     const agent = await ctx.agentLoop.create(SessionId('provider-stream-rejection'), { provider: 'mock', model: 'mock' })
+    const carried = captureCarriedStreams(ctx)
     ctx.on('llm/stream', async function* (_options, next) {
       for await (const chunk of next()) {
         yield chunk
@@ -767,9 +791,9 @@ describe('Agent.cancel()', () => {
     await waitForIdle(ctx, agent)
 
     const attempt = agent.session.snapshotEvents().find(event => event.type === 'assistant/attempt')
-    expect(attempt?.type === 'assistant/attempt'
-      ? expandAssistantStream(attempt.data.stream).map(member => member.chunk)
-      : []).toContainEqual({ type: 'text-delta', index: 0, text: 'partial before failure' })
+    const attemptStream = attempt === undefined ? undefined : carried.get(attempt.seq)
+    expect(attemptStream === undefined ? [] : expandAssistantStream(attemptStream).map(member => member.chunk))
+      .toContainEqual({ type: 'text-delta', index: 0, text: 'partial before failure' })
     expect(agent.session.snapshotEvents().find(event => event.type === 'turn/end')).toMatchObject({
       type: 'turn/end', data: { reason: { kind: 'error', error: { message: failure.message } } },
     })

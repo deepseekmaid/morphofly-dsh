@@ -65,7 +65,7 @@ function seededLog(id: string, answerParagraphs: number): { log: string; search:
       content: [{ type: 'text', text: 'OPENFOLD_LAST_USER' }], source: { kind: 'user' },
     }), surfaceOp: 'append' },
     { type: 'assistant/message', surfaceOp: 'append', data: {
-      turn: TURNS, step: 1, stream: [], message: createAssistantMessage({
+      turn: TURNS, step: 1,  message: createAssistantMessage({
         content: [
           { type: 'reasoning', text: paragraphs('OPENFOLD_REASONING', 30, 'Reasoning weighs one more consideration, paragraph') },
           { type: 'text', text: paragraphs('OPENFOLD_ANSWER', answerParagraphs, 'Final answer paragraph of the single Step') },

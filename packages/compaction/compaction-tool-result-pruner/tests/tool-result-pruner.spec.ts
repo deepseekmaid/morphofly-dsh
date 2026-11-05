@@ -53,7 +53,6 @@ function appendToolStep(
   })
   session.append('step/start', { turn, step: 1 })
   session.append('assistant/message', {
-    stream: [],
     turn,
     step: 1,
     message: createMessage({

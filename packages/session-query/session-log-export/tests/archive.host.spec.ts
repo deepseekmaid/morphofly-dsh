@@ -850,7 +850,6 @@ describe('session.export download endpoint', () => {
       id: 'metadata' as UserMessage['id'], role: 'user', source: { kind: 'user' },
       content: [{ type: 'text', text: 'no image', content }, { type: 'plugin:vendor', data: { content }, content }],
       message: { content }, inserted: [{ content }],
-      stream: [{ type: 'chunk', chunk: { type: 'block-end', block: content[0] } }],
     } } as SessionEvent
     const stored = log('session-root', undefined, [event])
     const readImage = vi.fn((ref: ImageAttachmentRef) => Promise.resolve(storedImage(String(ref.attachmentId), ref.mediaType)))
@@ -868,7 +867,6 @@ describe('session.export download endpoint', () => {
     const content = [image, file]
     const opaque = { type, seq: SessionSeq(1), time: 1000, ignorable: true, data: {
       content, message: { content }, inserted: [{ content }], messages: [{ content }],
-      stream: [{ type: 'chunk', time: 1000, chunk: { type: 'block-end', index: 0, block: content[0] } }],
     } } as SessionEvent
     const stored = log('session-root', undefined, [opaque])
     const readImage = vi.fn((ref: ImageAttachmentRef) => Promise.resolve(storedImage(String(ref.attachmentId), ref.mediaType)))
@@ -915,14 +913,6 @@ describe('session.export download endpoint', () => {
     const attempt = {
       type: 'assistant/attempt', seq: SessionSeq(4), time: 4000,
       data: {
-        stream: [
-          { type: 'text-chunks', time0: 3999, index: 0, dt: [], texts: ['ignored'] },
-          { type: 'chunk', time: 4000, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-          {
-            type: 'chunk', time: 4000,
-            chunk: { type: 'block-end', block: block('stream-1', 'image/png') },
-          },
-        ],
       },
     } as unknown as SessionEvent
     const api = await buildApi({ 'session-root': log('session-root', undefined, [wrapped, inserted, attempt]) })

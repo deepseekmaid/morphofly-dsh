@@ -77,7 +77,6 @@ describe('real Loader composition', () => {
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
     session.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createAssistantMessage({

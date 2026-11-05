@@ -40,7 +40,6 @@ function mathFixture(): string {
   })
   session.append('step/start', { turn: 1, step: 1 })
   session.append('assistant/message', {
-    stream: [],
     turn: 1,
     step: 1,
     message: createMessage({

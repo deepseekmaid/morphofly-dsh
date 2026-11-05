@@ -123,7 +123,7 @@ describe('answeredQuestionDefinition', () => {
       { type: 'event' as const, event: { type: 'step/end', seq: SessionSeq(7), time: 7000, data: { turn: 1, step: 1 } } as never },
       { type: 'event' as const, event: { type: 'step/start', seq: SessionSeq(8), time: 8000, data: { turn: 1, step: 2 } } as never },
       { type: 'event' as const, event: { type: 'assistant/message', seq: SessionSeq(10), time: 10000, surfaceOp: 'append',
-        data: { turn: 1, step: 2, stream: [], message: { id: 'final', role: 'assistant', source: { kind: 'model', provider: 'fake', model: 'fake' }, content: [{ type: 'text', text: 'Done' }] } } } as never },
+        data: { turn: 1, step: 2,  message: { id: 'final', role: 'assistant', source: { kind: 'model', provider: 'fake', model: 'fake' }, content: [{ type: 'text', text: 'Done' }] } } } as never },
       { type: 'event' as const, event: { type: 'step/end', seq: SessionSeq(11), time: 11000, data: { turn: 1, step: 2 } } as never },
       { type: 'event' as const, event: { type: 'turn/end', seq: SessionSeq(12), time: 12000, data: { turn: 1, reason: { kind: 'completed' } } } as never },
     ]

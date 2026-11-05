@@ -108,7 +108,6 @@ describe('incremental DeepSeek session-log upload', () => {
         content: [{ type: 'text', text: 'Answer' }],
         source: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
       }),
-      stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['Answer'] }],
     }, { surfaceOp: 'append' })
     const prepared = await ctx.deepseekLlmApiExtensions.prepare({
       body: body(), signal: SIGNAL, sessionId: session.id,
@@ -156,7 +155,7 @@ describe('incremental DeepSeek session-log upload', () => {
   it.each(['turn/start', 'assistant/attempt', 'request/context', 'tool/ptc-dispatch'])('rejects known log-only %s metadata before uploading', async (type) => {
     for (const metadata of [{ surfaceOp: 'append' }, { sourceEventSeqs: [0] }]) {
       const event = {
-        type, seq: SessionSeq(0), time: 1, data: { turn: 1, step: 1, stream: [] }, ignorable: true, ...metadata,
+        type, seq: SessionSeq(0), time: 1, data: { turn: 1, step: 1 }, ignorable: true, ...metadata,
       } as unknown as SessionEvent
       await expect(harness('wire-invalid', [event])).rejects.toThrow(/not surface-eligible/)
     }

@@ -1,0 +1,61 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/session/session-format-v4-to-v5/README.md
+/:
+  en: 33154bddbeb76f70
+  zh: 77d20e1364db3eef
+/deepseek-ai-dsh-session-format-v4-to-v5:
+  en: 5c911c36fc777867
+  zh: 523c41bb93008361
+/deepseek-ai-dsh-session-format-v4-to-v5/summary:
+  en: 29ce4bc99b75210f
+  zh: d23b10abecc036d0
+/deepseek-ai-dsh-session-format-v4-to-v5/table-of-contents:
+  en: 342195656957df59
+  zh: 85939b12d6d2fec1
+/deepseek-ai-dsh-session-format-v4-to-v5/use-this-package:
+  en: e2843a4bd85a5237
+  zh: c117924415ceee98
+/deepseek-ai-dsh-session-format-v4-to-v5/v4-to-v5-specification:
+  en: 8464af8890ac7fb1
+  zh: 5ce1268dbcac9df8
+/deepseek-ai-dsh-session-format-v4-to-v5/v4-to-v5-specification/header-and-physical-framing:
+  en: 8f74eb72190fcced
+  zh: 219c93b04816da71
+/deepseek-ai-dsh-session-format-v4-to-v5/v4-to-v5-specification/assistant-message-conversion:
+  en: c9aa83a46ce4c2d5
+  zh: 09b28541b22717c3
+/deepseek-ai-dsh-session-format-v4-to-v5/v4-to-v5-specification/assistant-attempt-conversion:
+  en: fae3f5249f45b6d2
+  zh: a6768797ebcfe6c9
+/deepseek-ai-dsh-session-format-v4-to-v5/v4-to-v5-specification/preserved-coordinates-and-timing:
+  en: d5e8fde07a0dd19d
+  zh: 2795f9997a309410
+/deepseek-ai-dsh-session-format-v4-to-v5/v4-to-v5-specification/source-audit-and-refusal:
+  en: ee0073f0da0b14e1
+  zh: f6102f362d202737
+/deepseek-ai-dsh-session-format-v4-to-v5/native-v5-admission:
+  en: b8acf5b8bac3fedf
+  zh: 7f481b1ff4dcb09a
+/deepseek-ai-dsh-session-format-v4-to-v5/native-v5-admission/header-and-settlement-payloads:
+  en: 78f5cf14886bf34c
+  zh: 66852f72592acdf7
+/deepseek-ai-dsh-session-format-v4-to-v5/native-v5-admission/validation-entry-points-and-recovery:
+  en: e76877e054a15ba7
+  zh: 49bbcdb794f31f4e
+/deepseek-ai-dsh-session-format-v4-to-v5/understand-the-implementation:
+  en: d6bf93ed6bccc8df
+  zh: ead891abf8825b58
+/deepseek-ai-dsh-session-format-v4-to-v5/further-exploration:
+  en: 9d55fcae47cf469b
+  zh: e5b4a701cee8d62b
+/deepseek-ai-dsh-session-format-v4-to-v5/model-experience:
+  en: 9a5c77d3a6c707af
+  zh: 7bfdcdde5d6f44fe
+/deepseek-ai-dsh-session-format-v4-to-v5/known-limitations-and-deferred-work:
+  en: 9675d5dbd37fe368
+  zh: f8c8eb493f8932ce
+/deepseek-ai-dsh-session-format-v4-to-v5/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

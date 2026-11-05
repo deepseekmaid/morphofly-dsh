@@ -812,7 +812,6 @@ describe('ConversationNodeAssembler', () => {
       turn: 2,
       step: 3,
       message: { role: 'assistant', content: [], source: { kind: 'model', provider: 'p', model: 'm' } },
-      stream: [],
     })
     if (settlementEvent.type !== 'assistant/message') throw new Error('expected Assistant settlement')
     const settlement = { type: 'event' as const, event: settlementEvent }
@@ -1115,7 +1114,6 @@ describe('ConversationNodeAssembler', () => {
     )
     assembler.replaceWindow([input(at(SessionSeq(10), 'assistant/message', {
       turn: 2, step: 1, message: { role: 'assistant', content: [] },
-      stream: [],
     }))], true)
     assembler.flush()
     expect([...testSnapshot(assembler)?.nodes.values() ?? []][0]?.data).toBe(-1)
@@ -1158,7 +1156,6 @@ describe('ConversationNodeAssembler', () => {
       input(at(SessionSeq(40), 'user/message', { id: 'm40', content: [], source: { kind: 'user' } })),
       input(at(SessionSeq(50), 'assistant/message', {
         turn: 1, step: 1, message: { role: 'assistant', content: [] },
-        stream: [],
       })),
     ], true)
     assembler.flush()
@@ -1173,7 +1170,6 @@ describe('ConversationNodeAssembler', () => {
     })))
     assembler.append(input(at(SessionSeq(70), 'assistant/message', {
       turn: 2, step: 1, message: { role: 'assistant', content: [] },
-      stream: [],
     })))
     assembler.flush()
 
@@ -1203,7 +1199,6 @@ describe('ConversationNodeAssembler', () => {
     )
     assembler.replaceWindow([input(at(SessionSeq(10), 'assistant/message', {
       turn: 2, step: 1, message: { role: 'assistant', content: [] },
-      stream: [],
     }))], true)
     assembler.flush()
 
@@ -1288,7 +1283,7 @@ describe('ConversationNodeAssembler', () => {
     assembler.replaceWindow([
       input(at(SessionSeq(1), 'user/message', { id: 'source', content: [], source: { kind: 'user' } })),
       input(at(SessionSeq(2), 'assistant/message', {
-        turn: 1, step: 1, message: { role: 'assistant', content: [] }, stream: [],
+        turn: 1, step: 1, message: { role: 'assistant', content: [] },
       })),
     ], false)
     assembler.flush()
@@ -1359,7 +1354,7 @@ describe('ConversationNodeAssembler', () => {
       input(at(SessionSeq(1), 'user/message', { id: 'source', content: [], source: { kind: 'user' } })),
       input(at(SessionSeq(2), 'turn/start', { turn: 1 })),
       input(at(SessionSeq(3), 'assistant/message', {
-        turn: 1, step: 1, message: { role: 'assistant', content: [] }, stream: [],
+        turn: 1, step: 1, message: { role: 'assistant', content: [] },
       })),
       input(at(SessionSeq(4), 'tool/call', { turn: 1, step: 1, callId: 'call', name: 'x', arguments: '{}' })),
     ], false)

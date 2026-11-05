@@ -38,7 +38,6 @@ function closedToolStep(): Session {
     source: { kind: 'user' },
   }), SURFACE)
   session.append('assistant/message', {
-    stream: [],
     turn: 1,
     step: 1,
     message: createMessage({
@@ -74,7 +73,6 @@ describe('tool-pairing boundaries', () => {
 
     const open = Session.create(SessionId('open-tool-step'))
     open.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({
@@ -92,7 +90,6 @@ describe('tool-pairing boundaries', () => {
   it('requires every result from a multiple-call assistant message', () => {
     const session = Session.create(SessionId('multiple-calls'))
     session.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({
@@ -131,7 +128,6 @@ describe('tool-pairing boundaries', () => {
   it('keeps neutral nodes inside an open pair unbalanced and free nodes balanced', () => {
     const midStep = Session.create(SessionId('neutral-mid-step'))
     midStep.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({
@@ -224,7 +220,6 @@ describe('tool-pairing cache refresh', () => {
       {
         type: 'assistant/message', seq: SessionSeq(1), time: 1,
         data: {
-          stream: [],
           turn: 1,
           step: 1,
           message: createMessage({
@@ -294,7 +289,6 @@ describe('tool-pairing cache refresh', () => {
       {
         type: 'assistant/message', seq: SessionSeq(5), time: 5,
         data: {
-          stream: [],
           turn: 2,
           step: 1,
           message: createMessage({

@@ -45,7 +45,6 @@ function appendPrompt(session: Session, text: string): SessionSeq {
 /** Append one assembled assistant message with a single text block. */
 function appendAssistant(session: Session, turn: number, step: number, text: string): void {
   session.append('assistant/message', {
-    stream: [],
     turn,
     step,
     message: createAssistantMessage({

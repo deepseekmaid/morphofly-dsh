@@ -67,7 +67,7 @@ function settlement(ids = [first, second], name = 'write', argumentsRaw = args, 
   }
   return { type: 'event', event: {
     type: 'assistant/message', seq: SessionSeq(5), time: 5, surfaceOp: 'append', data: {
-      turn: 1, step: 1, stream: [...stream.snapshot()],
+      turn: 1, step: 1,
       message: createAssistantMessage({ source: { provider: 'test', model: 'test' }, content: [
         ...text === '' ? [] : [{ type: 'text' as const, text }],
         ...ids.map(id => ({ type: 'tool-call' as const, id, name, arguments: argumentsRaw })),

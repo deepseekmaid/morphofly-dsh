@@ -114,7 +114,6 @@ function appendConversation(session: Session): void {
   const oldAssistant = session.append(
     'assistant/message',
     {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({
@@ -184,7 +183,6 @@ function appendConversation(session: Session): void {
   session.append(
     'assistant/message',
     {
-      stream: [],
       turn: 2,
       step: 1,
       message: createMessage({
@@ -223,7 +221,6 @@ function appendConversation(session: Session): void {
   session.append(
     'assistant/message',
     {
-      stream: [],
       turn: 2,
       step: 2,
       message: createMessage({
@@ -240,13 +237,6 @@ function appendConversation(session: Session): void {
   session.append('assistant/attempt', {
     turn: 2,
     step: 2,
-    stream: [{
-      type: 'text-chunks',
-      time0: 0,
-      index: 0,
-      dt: [],
-      texts: ['unfinished answer'],
-    }],
   })
 }
 
@@ -1164,7 +1154,6 @@ describe('session reference discovery and preparation', () => {
     source.append(
       'assistant/message',
       {
-        stream: [],
         turn: 3,
         step: 1,
         message: createMessage({
@@ -1266,7 +1255,6 @@ describe('session reference discovery and preparation', () => {
     const later = source.append(
       'assistant/message',
       {
-        stream: [],
         turn: 1,
         step: 1,
         message: createMessage({

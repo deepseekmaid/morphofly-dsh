@@ -59,3 +59,6 @@ runs/
 # Local tool scratch (pinned pnpm download, temporary tsconfigs)
 /.tmp-pnpm/
 /.tmp-tsconfig*.json
+
+# Any remaining local scratch files
+/.tmp-*

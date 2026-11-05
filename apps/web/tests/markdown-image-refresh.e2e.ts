@@ -26,7 +26,6 @@ function chartFixture(title: string): string {
   session.append('session/title', { title, messageSeqs: [user.seq], source: { kind: 'fallback' } })
   session.append('step/start', { turn: 1, step: 1 })
   session.append('assistant/message', {
-    stream: [],
     turn: 1,
     step: 1,
     message: createMessage({

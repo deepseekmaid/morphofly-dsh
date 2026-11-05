@@ -569,7 +569,7 @@ describe('web e2e: long Chat scroll contract', () => {
       for (let step = 1; step <= 6; step++) {
         drafts.push({ type: 'step/start', data: { turn: 8, step } })
         drafts.push({ type: 'assistant/message', surfaceOp: 'append', data: {
-          turn: 8, step, stream: [], message: createAssistantMessage({
+          turn: 8, step,  message: createAssistantMessage({
             content: [
               { type: 'reasoning', text: `VISIBLE_FOLD_STEP_${step}\n\n${Array.from({ length: 18 }, (_, line) =>
                 `Reasoning stage ${step}, paragraph ${line}: retained work details explain this intermediate decision.`).join('\n\n')}` },
@@ -582,7 +582,7 @@ describe('web e2e: long Chat scroll contract', () => {
       const bodyMarker = 'VISIBLE_FOLD_BODY'
       drafts.push({ type: 'step/start', data: { turn: 8, step: 7 } })
       drafts.push({ type: 'assistant/message', surfaceOp: 'append', data: {
-        turn: 8, step: 7, stream: [], message: createAssistantMessage({
+        turn: 8, step: 7,  message: createAssistantMessage({
           content: [{ type: 'text', text: `${bodyMarker}\n\n${Array.from({ length: scenario.bodyParagraphs }, (_, line) =>
             `Final answer paragraph ${line}: this content remains after the preceding work details fold.`).join('\n\n')}` }],
           source: { provider: 'fixture', model: 'fixture' },

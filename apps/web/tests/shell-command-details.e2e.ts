@@ -28,7 +28,7 @@ function shellFixture(arguments_: typeof ARGS, output: string): string {
   }), { surfaceOp: 'append' })
   session.append('step/start', { turn: 1, step: 1 })
   session.append('assistant/message', {
-    stream: [], turn: 1, step: 1,
+    turn: 1, step: 1,
     message: createAssistantMessage({
       content: [{ type: 'tool-call', id: callId, name: 'bash', arguments: args }],
       source: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
@@ -42,7 +42,7 @@ function shellFixture(arguments_: typeof ARGS, output: string): string {
   session.append('step/end', { turn: 1, step: 1 })
   session.append('step/start', { turn: 1, step: 2 })
   session.append('assistant/message', {
-    stream: [], turn: 1, step: 2,
+    turn: 1, step: 2,
     message: createAssistantMessage({
       content: [{ type: 'text', text: 'Diagnostic worker launched.' }],
       source: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
@@ -170,7 +170,7 @@ it.each([
       }), { surfaceOp: 'append' })
       session.append('step/start', { turn: 2, step: 1 })
       session.append('assistant/message', {
-        turn: 2, step: 1, stream: [],
+        turn: 2, step: 1,
         message: createAssistantMessage({
           content: [{ type: 'tool-call', id: callId, name, arguments: args }],
           source: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },

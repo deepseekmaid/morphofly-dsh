@@ -148,7 +148,7 @@ describe('canonical event payload acceptance', () => {
   it('adopts an assistant message and freezes its identified message', () => {
     const event: SessionEvent<'assistant/message'> = {
       type: 'assistant/message', seq: SessionSeq(0), time: 1, surfaceOp: 'append',
-      data: { turn: 1, step: 1, stream: [], message: createMessage({
+      data: { turn: 1, step: 1,  message: createMessage({
         role: 'assistant', content: [{ type: 'text', text: 'answer' }],
         source: { kind: 'model', provider: 'mock', model: 'mock' },
       }) },
@@ -276,7 +276,7 @@ describe('canonical event-local surface metadata', () => {
         .toThrow(/not surface-eligible/)
       const assistant = {
         ...userEvent(), type: 'assistant/message', sourceEventSeqs: [0],
-        data: { turn: 1, step: 1, stream: [], message: createMessage({
+        data: { turn: 1, step: 1,  message: createMessage({
           role: 'assistant', content: [], source: { kind: 'model', provider: 'mock', model: 'mock' },
         }) },
       } as unknown as SessionEvent
@@ -302,7 +302,7 @@ describe('canonical event-local surface metadata', () => {
   it.each(['turn/start', 'assistant/attempt', 'request/context', 'session/title', 'tool/ptc-dispatch'])('rejects known log-only %s metadata even when ignorable', (type) => {
     for (const metadata of [{ surfaceOp: 'append' }, { sourceEventSeqs: [0] }]) {
       const event = {
-        type, seq: SessionSeq(0), time: 1, data: { turn: 1, step: 1, stream: [] }, ignorable: true, ...metadata,
+        type, seq: SessionSeq(0), time: 1, data: { turn: 1, step: 1 }, ignorable: true, ...metadata,
       } as unknown as SessionEvent
       for (const accept of Object.values(entryPaths)) expect(() => accept(event)).toThrow(/not surface-eligible/)
     }

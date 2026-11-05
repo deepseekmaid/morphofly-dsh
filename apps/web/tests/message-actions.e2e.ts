@@ -51,7 +51,6 @@ function completedTailFixture(raw: string): string {
     if (finish < 0) throw new Error('borrowed step-one Assistant message has no finish record')
     const finishRecord = event.data.stream[finish]!
     if (finishRecord.type !== 'chunk') throw new Error('borrowed step-one finish is not a chunk record')
-    const streamTime = finishRecord.time
     return {
       ...event,
       data: {
@@ -60,17 +59,6 @@ function completedTailFixture(raw: string): string {
           ...event.data.message,
           content: [...event.data.message.content, { type: 'text' as const, text: MID_TURN_TEXT }],
         },
-        stream: [
-          ...event.data.stream.slice(0, finish),
-          { type: 'chunk' as const, time: streamTime, chunk: { type: 'block-start' as const, index: 3, blockType: 'text' as const } },
-          { type: 'text-chunks' as const, time0: streamTime, index: 3, dt: [], texts: [MID_TURN_TEXT] },
-          {
-            type: 'chunk' as const,
-            time: streamTime,
-            chunk: { type: 'block-end' as const, index: 3, block: { type: 'text' as const, text: MID_TURN_TEXT } },
-          },
-          ...event.data.stream.slice(finish),
-        ],
       },
     }
   })
@@ -91,16 +79,6 @@ function completedTailFixture(raw: string): string {
       data: {
         turn: 1,
         step: 2,
-        stream: [
-          { type: 'chunk', time, chunk: { type: 'block-start', index: 0, blockType: 'reasoning' } },
-          { type: 'reasoning-chunks', time0: time, index: 0, dt: [], texts: ['This path was interrupted.'] },
-          {
-            type: 'chunk',
-            time,
-            chunk: { type: 'block-end', index: 0, block: { type: 'reasoning', text: 'This path was interrupted.' } },
-          },
-          { type: 'chunk', time, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-        ],
       },
     }),
     at({ type: 'step/end', data: { turn: 1, step: 2 } }),
@@ -129,12 +107,6 @@ function completedTailFixture(raw: string): string {
           source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-v4-flash' },
           id: '{{message:99}}',
         },
-        stream: [
-          { type: 'chunk', time: 0, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-          { type: 'text-chunks', time0: 0, index: 0, dt: [], texts: ['DONE'] },
-          { type: 'chunk', time: 0, chunk: { type: 'block-end', index: 0, block: { type: 'text', text: 'DONE' } } },
-          { type: 'chunk', time: 0, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-        ],
       },
       surfaceOp: 'append',
     }),
@@ -172,12 +144,6 @@ function completedTailFixture(raw: string): string {
           source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-v4-flash' },
           content: [{ type: 'text', text: 'ORIGINAL ONLY' }],
         },
-        stream: [
-          { type: 'chunk', time: 0, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-          { type: 'text-chunks', time0: 0, index: 0, dt: [], texts: ['ORIGINAL ONLY'] },
-          { type: 'chunk', time: 0, chunk: { type: 'block-end', index: 0, block: { type: 'text', text: 'ORIGINAL ONLY' } } },
-          { type: 'chunk', time: 0, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-        ],
       },
     }),
     at({ type: 'step/end', data: { turn: 3, step: 1 } }),

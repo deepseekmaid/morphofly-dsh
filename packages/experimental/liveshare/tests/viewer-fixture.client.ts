@@ -3243,9 +3243,8 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       }
       const failure = { code: 'TRANSPORT', message: '连接被重置' }
       pushAssistant(sessionId, { type: 'finish', reason: { kind: 'error', failure } })
-      const attempt = activeAttempts.get(sessionId) as FixtureAttemptState
       const attemptEvent = append(sessionId, {
-        type: 'assistant/attempt', data: { turn: scenario.turn, step: 1, stream: [...attempt.stream.snapshot()] },
+        type: 'assistant/attempt', data: { turn: scenario.turn, step: 1 },
       })
       commitAssistant(sessionId, attemptEvent)
       append(sessionId, {
@@ -3269,7 +3268,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       if (active !== undefined) {
         pushAssistant(sessionId, { type: 'finish', reason: { kind: 'error', failure } })
         const attemptEvent = append(sessionId, {
-          type: 'assistant/attempt', data: { turn: scenario.turn, step: 1, stream: [...active.stream.snapshot()] },
+          type: 'assistant/attempt', data: { turn: scenario.turn, step: 1 },
         })
         commitAssistant(sessionId, attemptEvent)
       }
@@ -3300,7 +3299,6 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       pushAssistant(sessionId, { type: 'text-delta', index: 0, text: completed })
       pushAssistant(sessionId, { type: 'block-end', index: 0, block: { type: 'text', text: completed } })
       pushAssistant(sessionId, { type: 'finish', reason: { kind: 'stop' } })
-      const attempt = activeAttempts.get(sessionId) as FixtureAttemptState
       const message = append(sessionId, {
         type: 'assistant/message',
         surfaceOp: 'append',
@@ -3308,7 +3306,6 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           turn: scenario.turn,
           step: 1,
           message: assistantMessage(text(completed)),
-          stream: [...attempt.stream.snapshot()],
         },
       })
       commitAssistant(sessionId, message)
@@ -3348,7 +3345,6 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       pushAssistant(id, { type: 'block-end', index: 0, block: { type: 'text', text: done } })
       pushAssistant(id, { type: 'usage', usage: fixtureUsage(turn, step) })
       if (!aborted) pushAssistant(id, { type: 'finish', reason: { kind: 'stop' } })
-      const attempt = activeAttempts.get(id) as FixtureAttemptState
       const message = append(id, {
         type: 'assistant/message',
         surfaceOp: 'append',
@@ -3356,7 +3352,6 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           turn,
           step,
           message: assistantMessage(text(done)),
-          stream: [...attempt.stream.snapshot()],
           usage: fixtureUsage(turn, step),
           ...(aborted ? { interrupted: true } : {}),
         },

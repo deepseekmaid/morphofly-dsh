@@ -70,7 +70,7 @@ describe.skipIf(process.platform === 'win32')('Web sidebar shortcuts', () => {
       agent.session.append('turn/start', { turn: 1 })
       agent.session.append('user/message', createUserMessage({ content: [{ type: 'text', text: 'Prepare panel actions.' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
       agent.session.append('step/start', { turn: 1, step: 1 })
-      agent.session.append('assistant/message', { turn: 1, step: 1, stream: [], message: createMessage({ role: 'assistant', content: [{ type: 'text', text: 'Panel actions are ready.' }], source: { kind: 'model', provider: 'fixture', model: 'fixture' } }) }, { surfaceOp: 'append' })
+      agent.session.append('assistant/message', { turn: 1, step: 1,  message: createMessage({ role: 'assistant', content: [{ type: 'text', text: 'Panel actions are ready.' }], source: { kind: 'model', provider: 'fixture', model: 'fixture' } }) }, { surfaceOp: 'append' })
       agent.session.append('step/end', { turn: 1, step: 1 })
       agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
       await scaffold.ctx.sessions.flush(agent.session)

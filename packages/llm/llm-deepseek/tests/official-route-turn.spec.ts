@@ -35,7 +35,6 @@ it('records the prompt and fails the request when the official endpoint has a ma
   const events = agent.session.snapshotEvents()
   expect(events.map(event => event.type)).toContain('user/message')
   expect(events.find(event => event.type === 'assistant/attempt')?.data).toMatchObject({
-    stream: [{ chunk: { type: 'finish', reason: { kind: 'error', failure: { code: 'INVALID_CREDENTIAL' } } } }],
   })
   expect(fetch).not.toHaveBeenCalled()
 })

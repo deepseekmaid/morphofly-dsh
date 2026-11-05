@@ -25,7 +25,7 @@ function fixture(title: string): string {
   const user = session.append('user/message', createUserMessage({ content: [{ type: 'text', text: 'Show the output.' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
   session.append('session/title', { title, messageSeqs: [user.seq], source: { kind: 'fallback' } })
   session.append('step/start', { turn: 1, step: 1 })
-  session.append('assistant/message', { stream: [], turn: 1, step: 1, message: createAssistantMessage({
+  session.append('assistant/message', {  turn: 1, step: 1, message: createAssistantMessage({
     content: [{ type: 'text', text: '[First file](first.txt#L2) [Second file](second.txt) [Website](https://example.com/path?q=1#fragment)\n\n![Original](original.gif) ![Remote](https://images.example/original.gif)\n\nCONTEXT_MENU_READY' }],
     source: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
   }) }, { surfaceOp: 'append' })

@@ -90,7 +90,6 @@ describe('web e2e: notice Turn after a long Detailed Turn', () => {
           source: { kind: 'user' },
         }), { surfaceOp: 'append' })
         session.append('assistant/message', {
-          stream: [],
           turn,
           step: 1,
           message: createAssistantMessage({
@@ -114,7 +113,6 @@ describe('web e2e: notice Turn after a long Detailed Turn', () => {
         const callId = ToolCallId(`notice-wake-${String(step)}`)
         const args = JSON.stringify({ command: `diagnose ${String(step)}`, description: `Diagnostic ${String(step)}` })
         session.append('assistant/message', {
-          stream: [],
           turn: LONG_TURN,
           step,
           message: createAssistantMessage({
@@ -144,7 +142,6 @@ describe('web e2e: notice Turn after a long Detailed Turn', () => {
         await page.locator(`[data-chat-node-key$="${callId}"]`).waitFor({ state: 'attached', timeout: 15_000 })
       }
       session.append('assistant/message', {
-        stream: [],
         turn: LONG_TURN,
         step: TOOL_STEPS + 1,
         message: createAssistantMessage({
@@ -191,7 +188,6 @@ describe('web e2e: notice Turn after a long Detailed Turn', () => {
       await scaffold.ctx.sessions.flush(session)
       await page.locator('[data-turn-trigger]').first().waitFor({ state: 'attached', timeout: 15_000 })
       session.append('assistant/message', {
-        stream: [],
         turn: NOTICE_TURN,
         step: 1,
         message: createAssistantMessage({

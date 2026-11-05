@@ -45,7 +45,6 @@ export function appendMessageFixture(session: Session): Omit<MessageFixture, 'se
     source: { provider: 'test', model: 'test' },
   })
   session.append('assistant/message', {
-    stream: [],
     turn: 1,
     step: 1,
     message: first,
@@ -55,7 +54,6 @@ export function appendMessageFixture(session: Session): Omit<MessageFixture, 'se
     source: { provider: 'test', model: 'test' },
   })
   session.append('assistant/message', {
-    stream: [],
     turn: 1,
     step: 1,
     message: second,
@@ -65,7 +63,6 @@ export function appendMessageFixture(session: Session): Omit<MessageFixture, 'se
     source: { provider: 'test', model: 'test' },
   })
   session.append('assistant/message', {
-    stream: [],
     turn: 1,
     step: 1,
     message: empty,

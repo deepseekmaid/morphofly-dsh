@@ -38,7 +38,7 @@ function liveToolRequests(): LogicalSessionEvent<'assistant/message'> {
   return {
     type: 'assistant/message', seq: SessionSeq(21), time: 110, surfaceOp: 'append',
     data: {
-      turn: 3, step: 2, stream: [],
+      turn: 3, step: 2,
       message: createMessage({
         role: 'assistant', source: { kind: 'model', provider: 'mock', model: 'mock' },
         content: [

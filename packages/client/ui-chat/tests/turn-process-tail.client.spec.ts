@@ -76,7 +76,7 @@ describe('Turn nodes in partial windows', () => {
       entry({ type: 'step/end', seq: SessionSeq(6), time: 6_000, data: { turn: 1, step: 1 } }),
       entry({ type: 'step/start', seq: SessionSeq(7), time: 7_000, data: { turn: 1, step: 2 } }),
       entry({ type: 'assistant/message', seq: SessionSeq(8), time: 8_000, surfaceOp: 'append', data: {
-        turn: 1, step: 2, stream: [],
+        turn: 1, step: 2,
         message: createAssistantMessage({ source: { provider: 'test', model: 'test' }, content: [{ type: 'text', text: 'Done' }] }),
       } }),
       entry({ type: 'step/end', seq: SessionSeq(9), time: 9_000, data: { turn: 1, step: 2 } }),

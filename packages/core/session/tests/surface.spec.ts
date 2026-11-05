@@ -65,7 +65,6 @@ function surfaceSession(): Session {
     content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' },
   }), { surfaceOp: 'append' })
   s.append('assistant/message', {
-    stream: [],
     turn: 1, step: 1,
     message: createMessage({
       role: 'assistant',
@@ -141,7 +140,7 @@ describe('foldSurface source-event references', () => {
     expect(() => foldSurface([event])).toThrow(/cannot carry sourceEventSeqs/)
   })
 
-  it('rejects obsolete Assistant chunk references on an assistant message', () => {
+  it('rejects cited source events on an assistant message', () => {
     const event = {
       type: 'assistant/message',
       seq: SessionSeq(0),
@@ -157,12 +156,11 @@ describe('foldSurface source-event references', () => {
             ...{ provider: 'mock', model: 'mock' },
           },
         }),
-        stream: [],
       },
       surfaceOp: 'append',
       sourceEventSeqs: [],
     } as unknown as SessionEvent
-    expect(() => foldSurface([event])).toThrow(/embeds its source stream/)
+    expect(() => foldSurface([event])).toThrow(/cannot carry sourceEventSeqs/)
   })
 
   it.each([
@@ -409,7 +407,6 @@ describe('SurfaceManager', () => {
     expect(() => s.append(
       'assistant/message',
       {
-        stream: [],
         turn: 1, step: 1,
         message: createMessage({
           role: 'assistant',
@@ -665,13 +662,11 @@ describe('deriveMessages with surface', () => {
     s.append('turn/start', { turn: 1 })
     s.append('assistant/attempt', {
       turn: 1, step: 1,
-      stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [1], texts: ['h', 'i'] }],
     })
     s.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })
     s.append('assistant/message', {
-      stream: [],
       turn: 1, step: 1,
       message: createMessage({
         role: 'assistant',
@@ -746,7 +741,6 @@ describe('Session.append surface opts', () => {
       { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } },
       { type: 'step/start', seq: SessionSeq(1), time: 2, data: { turn: 1, step: 1 } },
       { type: 'assistant/message', seq: SessionSeq(2), time: 3, data: {
-        stream: [],
         turn: 1, step: 1,
         message: createMessage({
           role: 'assistant',
@@ -775,7 +769,6 @@ describe('Session.append surface opts', () => {
   it('surfaceOp primitives are not cloned (they are immutable)', () => {
     const s = Session.create(SessionId('prim'))
     const event = s.append('assistant/message', {
-      stream: [],
       turn: 1, step: 1,
       message: createMessage({
         role: 'assistant',

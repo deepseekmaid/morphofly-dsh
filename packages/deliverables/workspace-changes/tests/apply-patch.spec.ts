@@ -63,7 +63,7 @@ async function boot(environment: string) {
     const callId = ToolCallId(`patch-review-${++callNumber}`)
     const serialized = JSON.stringify(args)
     session.append('assistant/message', {
-      stream: [], turn: 1, step: 1,
+      turn: 1, step: 1,
       message: createAssistantMessage({ content: [{ type: 'tool-call', id: callId, name, arguments: serialized }],
         source: { provider: 'deepseek-official', model: 'deepseek-v4-flash' } }),
     }, { surfaceOp: 'append' })

@@ -634,7 +634,6 @@ export function shellTurn(session: Session, turn: number, calls: readonly { call
   session.append('assistant/message', {
     turn,
     step,
-    stream: [],
     message: createAssistantMessage({
       content: calls.map(call => ({ type: 'tool-call' as const, id: ToolCallId(call.callId), name: 'bash', arguments: callArguments(call.command) })),
       source: { provider: 'fixture', model: 'fixture' },

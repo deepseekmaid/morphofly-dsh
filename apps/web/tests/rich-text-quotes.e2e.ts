@@ -141,15 +141,6 @@ function quoteHistoryFixture(raw: string): string {
         ],
         source: { kind: 'model', provider: 'fixture', model: 'fixture' },
       },
-      stream: [
-        { type: 'chunk', time: 0, chunk: { type: 'block-start', index: 0, blockType: 'reasoning' } },
-        { type: 'reasoning-chunks', time0: 0, index: 0, dt: [], texts: [THINKING_TEXT] },
-        { type: 'chunk', time: 0, chunk: { type: 'block-end', index: 0, block: { type: 'reasoning', text: THINKING_TEXT } } },
-        { type: 'chunk', time: 0, chunk: { type: 'block-start', index: 1, blockType: 'text' } },
-        { type: 'text-chunks', time0: 0, index: 1, dt: [], texts: ['Quote fixture ready.'] },
-        { type: 'chunk', time: 0, chunk: { type: 'block-end', index: 1, block: { type: 'text', text: 'Quote fixture ready.' } } },
-        { type: 'chunk', time: 0, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-      ],
     },
     surfaceOp: 'append',
   })

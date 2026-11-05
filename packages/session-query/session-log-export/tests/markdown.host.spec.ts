@@ -105,7 +105,6 @@ function assistant(seq: number, content: ContentBlock[], turn = 1): SessionEvent
         source: { kind: 'model', provider: 'test', model: 'test' },
         content,
       },
-      stream: [],
     },
   }
 }

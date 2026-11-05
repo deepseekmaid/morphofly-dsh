@@ -312,7 +312,6 @@ describe('compaction-image-offload', () => {
       turn: 0,
       step: 0,
       message: createAssistantMessage({ content: [], source: { provider: 'mock', model: 'mock' } }),
-      stream: [],
     }, { surfaceOp: 'append' })
     const first = agent.session.append('user/message', createUserMessage({
       content: [image('first')], source: { kind: 'user' },
@@ -357,7 +356,6 @@ describe('compaction-image-offload', () => {
         ],
         source: { provider: 'mock', model: 'mock' },
       }),
-      stream: [],
     }, { surfaceOp: 'append' })
     agent.session.append('tool/call', { turn: 0, step: 1, callId: emptyCallId, name: 'read_image', arguments: '{}' })
     agent.session.append('tool/result', {

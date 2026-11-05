@@ -158,7 +158,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Reject noncanonical request-header fields, developer roles/content, and contradictory tool failure metadata.
- * This does not validate complete event payloads or embedded provider streams.
+ * This does not validate complete event payloads.
  * @param event - event whose locally related payload fields are inspected.
  * @param subject - event location to include in validation errors.
  * @throws when request-header fields, developer roles/content, or tool failure metadata are invalid.
@@ -333,7 +333,7 @@ function assertSourceEventReferences(
 ): void {
   const raw: unknown = event.sourceEventSeqs
   if (event.type === 'assistant/message' && raw !== undefined) {
-    throw new Error('assistant/message embeds its source stream and cannot carry sourceEventSeqs')
+    throw new Error('assistant/message cannot carry sourceEventSeqs')
   }
   const sources = new Set<SessionSeq>()
   if (raw !== undefined) {

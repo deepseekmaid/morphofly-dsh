@@ -54,7 +54,6 @@ describe('session-query semantic extraction', () => {
         content: messageContent, source: { kind: 'user' },
       }), surfaceOp: 'append' },
       { type: 'assistant/message', seq: SessionSeq(1), time: 2, data: {
-        stream: [],
         turn: 1, step: 1,
         message: createMessage({
           role: 'assistant',
@@ -107,7 +106,6 @@ describe('session-query semantic extraction', () => {
       seq: SessionSeq(9),
       time: 10,
       data: {
-        stream: [],
         turn: 1,
         step: 1,
         message: createMessage({
@@ -149,7 +147,6 @@ describe('session-query semantic extraction', () => {
         data: {
           turn: 1,
           step: 1,
-          stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['raw'] }],
         },
       },
       { type: 'request/header', seq: SessionSeq(4), time: 1, data: { header: { config: { provider: 'test', model: 'test' } }, reason: 'initial' } },
@@ -171,7 +168,6 @@ describe('session-query document and filter helpers', () => {
       data: {
         turn: 1,
         step: 1,
-        stream: [{ type: 'text-chunks', time0: 11, index: 0, dt: [], texts: ['raw'] }],
       },
     },
     { type: 'user/message', seq: SessionSeq(2), time: 12, data:

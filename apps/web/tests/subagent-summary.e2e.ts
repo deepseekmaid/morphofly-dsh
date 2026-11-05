@@ -39,7 +39,7 @@ function startTurn(agent: Agent, turn: number): void {
 
 function appendCall(agent: Agent, turn: number, callId: ToolCallId, args: string, name = 'subagent'): SessionEvent<'tool/call'> {
   agent.session.append('assistant/message', {
-    turn, step: 1, stream: [],
+    turn, step: 1,
     message: createAssistantMessage({
       content: [{ type: 'tool-call', id: callId, name, arguments: args }], source: SOURCE,
     }),
@@ -142,7 +142,7 @@ describe.skipIf(MODE === 'record')('web e2e: subagent task summary', () => {
     push({ type: 'block-end', index: 0, block })
     push({ type: 'finish', reason: { kind: 'tool-calls' } })
     const message = agent.session.append('assistant/message', {
-      turn: 1, step: 1, stream: [...stream.snapshot()],
+      turn: 1, step: 1,
       message: createAssistantMessage({ content: [block], source: SOURCE }),
     }, { surfaceOp: 'append' })
     emit({ type: 'end', attemptId, revision: ++revision, index, outcome: { kind: 'committed', eventType: 'assistant/message', seq: message.seq } })

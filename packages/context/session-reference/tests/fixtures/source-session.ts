@@ -25,7 +25,6 @@ export function apply(ctx: Context): void {
   source.append('assistant/message', {
     turn: 1,
     step: 1,
-    stream: [],
     message: createMessage({
       role: 'assistant',
       content: [

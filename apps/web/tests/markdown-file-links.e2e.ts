@@ -36,7 +36,7 @@ function parentPathFixture(path: string): string {
   const callId = ToolCallId('parent-file-read')
   const args = JSON.stringify({ file_path: path, offset: 24, limit: 7 })
   session.append('assistant/message', {
-    turn: 1, step: 1, stream: [],
+    turn: 1, step: 1,
     message: createAssistantMessage({
       content: [{ type: 'tool-call', id: callId, name: 'read', arguments: args }],
       source: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
@@ -50,7 +50,7 @@ function parentPathFixture(path: string): string {
   session.append('step/end', { turn: 1, step: 1 })
   session.append('step/start', { turn: 1, step: 2 })
   session.append('assistant/message', {
-    turn: 1, step: 2, stream: [],
+    turn: 1, step: 2,
     message: createAssistantMessage({
       content: [{ type: 'text', text: `[Parent file:24–30](<${path}#L24-L30>) · [Parent file:30](<${path}#L30>)` }],
       source: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
@@ -79,7 +79,7 @@ function changedDirectoryFixture(path: string): string {
   session.append('working-directory/change', { cwd: '{{cwd}}/.agents/worktrees/w' })
   session.append('step/start', { turn: 1, step: 1 })
   session.append('assistant/message', {
-    turn: 1, step: 1, stream: [],
+    turn: 1, step: 1,
     message: createAssistantMessage({
       content: [{ type: 'text', text: `[Worktree notes](${path})` }],
       source: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },

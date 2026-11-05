@@ -840,7 +840,7 @@ describe('turn.complete reasons and sessions the bridge did not follow from the 
     const handle = await h.ctx.agentLoop.createAgent(h.ctx, { sessionId: SessionId('ends'), agentOptions: { provider: 'mock', model: 'mock' } })
     // An assistant message outside any turn the bridge follows is left alone.
     handle.agent.session.append('assistant/message', {
-      turn: 0, step: 0, stream: [],
+      turn: 0, step: 0,
       message: createAssistantMessage({ content: [{ type: 'text', text: 'stray' }], source: { provider: 'mock', model: 'mock' } }),
     }, { surfaceOp: 'append' })
     await handle.dispose()

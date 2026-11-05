@@ -339,7 +339,6 @@ describe('web e2e: shipped right Sidebar', () => {
         },
       } as never, { surfaceOp: 'append' })
       agent.session.append('assistant/message', {
-        stream: [],
         turn: 1,
         step: 1,
         message: createMessage({

@@ -371,7 +371,6 @@ describe('SQLite session search', () => {
     session.append(
       'assistant/message',
       {
-        stream: [],
         turn: 1,
         step: 1,
         message: createAssistantMessage({
@@ -410,7 +409,6 @@ describe('SQLite session search', () => {
         data: {
           turn: 1,
           step: 1,
-          stream: [{ type: 'text-chunks', time0: 11, index: 0, dt: [], texts: ['needle raw'] }],
         },
       },
       { type: 'user/message', seq: SessionSeq(2), time: 12, data: createUserMessage({

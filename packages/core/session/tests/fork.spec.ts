@@ -268,7 +268,6 @@ describe('fork boundaries inside an open turn', () => {
   function appendToolRequest(session: Session, callId: ToolCallId): void {
     session.append('step/start', { turn: 2, step: 1 })
     session.append('assistant/message', {
-      stream: [],
       turn: 2, step: 1,
       message: createMessage({
         role: 'assistant',
@@ -303,7 +302,6 @@ describe('fork boundaries inside an open turn', () => {
     const { sessions, source } = await openTurnSource('open-step-closed')
     source.append('step/start', { turn: 2, step: 1 })
     source.append('assistant/message', {
-      stream: [],
       turn: 2, step: 1,
       message: createMessage({
         role: 'assistant',
@@ -369,7 +367,7 @@ describe('fork boundaries inside an open turn', () => {
     const { sessions, source } = await openTurnSource('open-mid-stream')
     source.append('step/start', { turn: 2, step: 1 })
     source.append('assistant/attempt', {
-      turn: 2, step: 1, stream: [],
+      turn: 2, step: 1,
     })
 
     const child = sessions.fork(source, lastSeq(source), SessionId('open-mid-stream-child'))

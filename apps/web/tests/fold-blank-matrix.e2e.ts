@@ -229,7 +229,7 @@ function seededFixture(id: string, bodyParagraphs: number): ChatScrollFixture {
   for (let step = 1; step <= SEEDED_STEPS; step++) {
     if (step > 1) drafts.push({ type: 'step/start', data: { turn: SEEDED_TURNS, step } })
     drafts.push({ type: 'assistant/message', surfaceOp: 'append', data: {
-      turn: SEEDED_TURNS, step, stream: [], message: createAssistantMessage({
+      turn: SEEDED_TURNS, step,  message: createAssistantMessage({
         content: [
           { type: 'reasoning', text: paragraphs(`FOLDMX_STEP_${step}`, 18, `Reasoning stage ${step} explains an intermediate decision, paragraph`) },
           { type: 'text', text: `FOLDMX_PROGRESS_${step}` },
@@ -242,7 +242,7 @@ function seededFixture(id: string, bodyParagraphs: number): ChatScrollFixture {
   drafts.push(
     { type: 'step/start', data: { turn: SEEDED_TURNS, step: SEEDED_STEPS + 1 } },
     { type: 'assistant/message', surfaceOp: 'append', data: {
-      turn: SEEDED_TURNS, step: SEEDED_STEPS + 1, stream: [], message: createAssistantMessage({
+      turn: SEEDED_TURNS, step: SEEDED_STEPS + 1,  message: createAssistantMessage({
         content: [{ type: 'text', text: paragraphs('FOLDMX_BODY', bodyParagraphs, 'Final answer paragraph that remains after the work details fold') }],
         source: { provider: 'fixture', model: 'fixture' },
       }),

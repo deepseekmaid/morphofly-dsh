@@ -87,7 +87,7 @@ export type OptionalSessionSeq = SessionSeq | null
  * Compatibility review and the retained migration obligations are recorded in
  * `.agents/notes/implemented/process/2026-10-08-session-reader-compatibility-review.md`.
  */
-export const SESSION_FORMAT_VERSION = 4
+export const SESSION_FORMAT_VERSION = 5
 
 /**
  * Immutable validated storage metadata, kept outside the conversation event log.
@@ -350,17 +350,25 @@ export interface SessionEventMap {
     turn: number
     step: number
     message: AssistantMessage
-    /** Exact timed model stream, compacted without joining delta boundaries. */
-    stream: AssistantStreamRecord[]
     usage?: TokenUsage
     interrupted?: true
+    /** Epoch milliseconds of the first output token; absent when the stream carried none. */
+    firstTokenTime?: number
   }
   /**
-   * One model attempt that committed no surface message. The embedded stream
-   * preserves a failed, retried, cancelled, or stream-error attempt that
-   * reached settlement without fabricating model-visible history.
+   * One model attempt that committed no surface message. The Session-local
+   * sidecar preserves the exact timed stream of a failed, retried, cancelled,
+   * or stream-error attempt that reached settlement without fabricating
+   * model-visible history; the event keeps only the scalars that synchronous
+   * folds need.
    */
-  'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[] }
+  'assistant/attempt': {
+    turn: number
+    step: number
+    usage?: TokenUsage
+    /** Epoch milliseconds of the first output token; absent when the stream carried none. */
+    firstTokenTime?: number
+  }
   /**
    * The model requested one tool invocation: `name` with the raw `arguments`
    * JSON string exactly as the model produced it (unparsed). `callId` pairs the
@@ -478,7 +486,7 @@ export type SurfaceOp =
 export type SurfaceIntent<T extends SurfaceEventType = SurfaceEventType> = {
   surfaceOp: SurfaceOp
 } & (T extends 'assistant/message' ? {
-  /** Assistant messages embed their provider stream instead of citing source events. */
+  /** Assistant messages never cite earlier source events. */
   sourceEventSeqs?: never
 } : {
   /** Complete non-empty set of known earlier source-event seqs. */

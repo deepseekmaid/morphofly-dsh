@@ -98,7 +98,6 @@ function appendAssistantMessage(
   turn: number,
   step: number,
   texts: readonly string[],
-  time0 = 100,
 ): void {
   session.append('assistant/message', {
     turn,
@@ -107,10 +106,6 @@ function appendAssistantMessage(
       content: [{ type: 'text', text: texts.join('') }],
       source: { provider: 'mock', model: 'mock' },
     }),
-    stream: [
-      { type: 'text-chunks', time0, index: 0, dt: texts.slice(1).map(() => 5), texts: [...texts] },
-      { type: 'chunk', time: time0 + Math.max(0, texts.length - 1) * 5, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-    ],
   }, { surfaceOp: 'append' })
 }
 
@@ -263,10 +258,6 @@ describe('SessionTelemetryCoordinator on-demand capture', () => {
     ])
     expect(backend.ledger().map(record => record.attributes['event.seq'])).toEqual([0, 1, 2])
     expect(backend.ledger()[2]!.body).toMatchObject({
-      stream: [
-        { type: 'text-chunks', time0: 100, index: 0, dt: [], texts: ['first'] },
-        { type: 'chunk', time: 100, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-      ],
     })
 
     expect(backend.ledger()).toHaveLength(3)
@@ -281,10 +272,6 @@ describe('SessionTelemetryCoordinator on-demand capture', () => {
     ])
     expect(backend.ledger().map(record => record.attributes['event.seq'])).toEqual([0, 1, 2, 3, 4])
     expect(backend.ledger()[3]!.body).toMatchObject({
-      stream: [
-        { type: 'text-chunks', time0: 200, index: 0, dt: [], texts: ['second'] },
-        { type: 'chunk', time: 200, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-      ],
     })
   })
 
@@ -439,7 +426,7 @@ describe('SessionTelemetryCoordinator adoption', () => {
       appendTurn(parent)
       parent.append('step/start', { turn: 1, step: 1 })
       parent.append('assistant/message', {
-        turn: 1, step: 1, stream: [],
+        turn: 1, step: 1,
         message: createAssistantMessage({
           content: [{ type: 'tool-call', id: ToolCallId('fork-call'), name: 'bash', arguments: '{}' }],
           source: { provider: 'mock', model: 'mock' },

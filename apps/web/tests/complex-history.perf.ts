@@ -221,7 +221,6 @@ function appendAssistant(
   body: string,
 ): void {
   session.append('assistant/message', {
-    stream: [],
     turn,
     step,
     message: createAssistantMessage({
@@ -253,7 +252,6 @@ function appendToolStep(
   })
 
   session.append('assistant/message', {
-    stream: [],
     turn,
     step,
     message: createAssistantMessage({
