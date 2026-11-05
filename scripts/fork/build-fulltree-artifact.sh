@@ -8,6 +8,13 @@
 # requires the official client build profile. Packing the tree that already
 # passed `pnpm run build` avoids both.
 #
+# Preconditions: `pnpm run build:artifacts` plus the full native build
+# (`pnpm --dir native/system run build:native`, needs musl-tools). The artifact
+# gate only builds the host Node-API addon, so the static-musl `landlock-run`
+# launcher exists only after the full build; step 0 rejects a tree without it
+# instead of packing a release that cannot run `workspace-write` on a target
+# without bubblewrap.
+#
 # Usage:
 #   bash scripts/fork/build-fulltree-artifact.sh [--skip-smoke]
 #
@@ -24,6 +31,8 @@
 set -euo pipefail
 export LC_ALL=C
 
+LAUNCHER_PATH="native/system/packages/linux-x64/bin/landlock-run"
+
 REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-$REPO/artifacts}"
 VERIFY_DIR="${VERIFY_DIR:-$ARTIFACTS_DIR/.verify}"
@@ -31,7 +40,7 @@ SMOKE=1
 for arg in "$@"; do
   case "$arg" in
     --skip-smoke) SMOKE=0 ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -62,6 +71,7 @@ mkdir -p "$ARTIFACTS_DIR"
 log "repo=$REPO head=$HEAD_SHORT version=$VERSION"
 [ -f apps/cli/lib/bin.js ] || die "missing apps/cli/lib/bin.js: run 'pnpm run build:artifacts' first"
 [ -f apps/web/dist/index.html ] || die "missing apps/web/dist/index.html: run 'pnpm run build:artifacts' first"
+[ -x "$LAUNCHER_PATH" ] || die "missing executable $LAUNCHER_PATH: run the full native build first ('pnpm --dir native/system run build:native'); it needs musl-tools/musl-gcc and produces the static Landlock launcher"
 DIRTY="$(git status --porcelain | grep -v '^?? runs/' | grep -v '^?? artifacts/' | head -20 || true)"
 DIRTY_COUNT="$(git status --porcelain | grep -v '^?? runs/' | grep -v '^?? artifacts/' | wc -l || true)"
 if [ "$DIRTY_COUNT" != "0" ]; then
@@ -90,6 +100,13 @@ if [ "$SMOKE" = "1" ]; then
   mkdir -p "$VERIFY_DIR"
   time tar --zstd -xf "$ARTIFACT" -C "$VERIFY_DIR"
   [ -f "$VERIFY_DIR/apps/cli/lib/bin.js" ] || die "extracted tree lacks apps/cli/lib/bin.js"
+  [ -x "$VERIFY_DIR/$LAUNCHER_PATH" ] || die "extracted tree lacks executable $LAUNCHER_PATH: the launcher must be built before packing"
+  need file
+  file "$VERIFY_DIR/$LAUNCHER_PATH" | grep -q 'statically linked' || die "extracted $LAUNCHER_PATH is not a static ELF: $(file "$VERIFY_DIR/$LAUNCHER_PATH")"
+  LAUNCHER_PROBE="$("$VERIFY_DIR/$LAUNCHER_PATH" --probe 2>&1)" || die "extracted landlock-run --probe failed: $LAUNCHER_PROBE"
+  log "extracted landlock-run --probe: $LAUNCHER_PROBE"
+  # The deployment target's kernel decides enforcement, not this build host.
+  [ "$LAUNCHER_PROBE" = "landlock: fully enforced" ] || warn "this build host reports '$LAUNCHER_PROBE'; the extracted launcher is present but not fully enforced here"
   V="$(node "$VERIFY_DIR/apps/cli/lib/bin.js" --version 2>&1)" || die "extracted tree --version failed: $V"
   [ "$V" = "$VERSION" ] || die "extracted tree --version=$V != $VERSION"
   log "extracted --version = $V"

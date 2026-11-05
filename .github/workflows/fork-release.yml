@@ -5,6 +5,11 @@
 # node_modules + built lib/dist). The deployment target only extracts it and
 # flips a symlink; it never installs, builds, or reaches the network. Deploy and
 # rollback stay manual and local, so no deployment secrets live in this repo.
+#
+# The tree must carry the static-musl `landlock-run` launcher, otherwise
+# `workspace-write` fails closed on targets without bubblewrap. `build:artifacts`
+# only builds the host Node-API addon, so the full native build (musl-tools)
+# runs before packing and the tarball check rejects a tree without the launcher.
 name: Fork release
 
 on:
@@ -55,10 +60,28 @@ jobs:
           cache: pnpm
       - name: Install (immutable)
         run: pnpm install --frozen-lockfile
+      - name: Install the musl toolchain
+        # The static Landlock launcher links against musl; without musl-gcc the
+        # full native build cannot produce it.
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq musl-tools
       - name: Ensure zstd is available
         run: command -v zstd || { sudo apt-get update -qq && sudo apt-get install -y zstd; }
       - name: Build package artifacts and the Web bundle
         run: pnpm run build:artifacts
+      - name: Build the full native package set
+        # `build:artifacts` builds the host addon through `build:native-system`,
+        # which passes `--host-addon-only` and therefore skips the static-musl
+        # `landlock-run`. The full build adds it (plus both flock libc builds).
+        run: |
+          command -v musl-gcc >/dev/null || { echo "musl-gcc is missing: install musl-tools" >&2; exit 1; }
+          uname -r
+          pnpm --dir native/system run build:native
+          test -x native/system/packages/linux-x64/bin/landlock-run || {
+            echo "the native build did not produce native/system/packages/linux-x64/bin/landlock-run" >&2
+            exit 1
+          }
       - name: Type-check aggregate tests and scripts against the build
         run: pnpm run build:check
       # The extraction smoke check needs ~2.6 GB of unpacked tree beside the
@@ -77,6 +100,28 @@ jobs:
           printf '%s  %s\n' "$(cat "$ARTIFACT.sha256")" "$ARTIFACT" | sha256sum -c -
           tar_entry_ok="$(zstd -dc "$ARTIFACT" | tar -tf - | grep -cE '^\./(apps/cli/lib/bin\.js|apps/web/dist/index\.html)$' || true)"
           test "$tar_entry_ok" = "2" || { echo "tarball is missing the CLI entry or the Web bundle" >&2; exit 1; }
+          # The static-musl Landlock launcher is what keeps `workspace-write`
+          # usable on targets without bubblewrap; a tarball without it is the
+          # regression that shipped once already (issue #3).
+          launcher_entry="$(zstd -dc "$ARTIFACT" | tar -tf - | grep -cxF './native/system/packages/linux-x64/bin/landlock-run' || true)"
+          test "$launcher_entry" = "1" || {
+            echo "tarball is missing ./native/system/packages/linux-x64/bin/landlock-run:" >&2
+            echo "install musl-tools and run 'pnpm --dir native/system run build:native' before packing" >&2
+            exit 1
+          }
+          launcher_dir="$(mktemp -d)"
+          zstd -dc "$ARTIFACT" | tar -xf - -C "$launcher_dir" ./native/system/packages/linux-x64/bin/landlock-run
+          launcher="$launcher_dir/native/system/packages/linux-x64/bin/landlock-run"
+          test -x "$launcher" || { echo "tarball's landlock-run is not executable" >&2; exit 1; }
+          file "$launcher"
+          file "$launcher" | grep -q 'statically linked' || { echo "tarball's landlock-run is not a static ELF" >&2; exit 1; }
+          probe_out="$("$launcher" --probe)"
+          echo "landlock-run --probe: $probe_out"
+          test "$probe_out" = "landlock: fully enforced" || {
+            echo "tarball's landlock-run probes '$probe_out' on kernel $(uname -r), expected 'landlock: fully enforced'" >&2
+            exit 1
+          }
+          rm -rf "$launcher_dir"
           node --input-type=module -e '
             import { readFileSync } from "node:fs"
             const manifest = JSON.parse(readFileSync(process.argv[1], "utf8"))
@@ -114,8 +159,9 @@ jobs:
             echo "- artifact: \`$(basename "$ARTIFACT")\` ($(numfmt --to=iec --suffix=B "$BYTES"))"
             echo "- sha256: \`$SHA\`"
             echo "- built on: GitHub-hosted ubuntu-24.04, node $(node -v), pnpm $(pnpm --version)"
+            echo "- landlock: static-musl \`landlock-run\` included and probed on the runner"
             echo
-            echo 'The tarball contains the full workspace tree; the target only extracts it (no install, build, or network).'
+            echo 'The tarball contains the full workspace tree, including the static-musl `landlock-run` launcher; the target only extracts it (no install, build, or network).'
             echo
             echo '```sh'
             echo "sha256sum -c <(echo '$SHA  $(basename "$ARTIFACT")')"
