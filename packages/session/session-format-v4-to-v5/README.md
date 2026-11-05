@@ -160,10 +160,14 @@ The edge preserves the recorded request prefix exactly; provider cache availabil
 
 ## Known Limitations and Deferred Work
 
+<a id="known-limitations-and-deferred-work"></a>
+
 - The edge returns logical events only; it neither reads nor writes sidecar files.
 - A caller that converts a stored V4 generation without a persistence layer that tees the removed streams loses the timed stream for that generation; persistence owns that guarantee.
 - Fork paths must copy `streams.v1/` from the source Session directory; export archives already package it.
 
 ### Dev Note
+
+<a id="dev-note"></a>
 
 None.

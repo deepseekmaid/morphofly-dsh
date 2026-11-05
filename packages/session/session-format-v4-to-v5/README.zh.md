@@ -160,10 +160,14 @@ attempt 保留 `usage` 与 `firstTokenTime`，是因为同步统计折叠此前�
 
 ## 已知限制与延后工作
 
+<a id="known-limitations-and-deferred-work"></a>
+
 - 该边只返回逻辑事件，既不读也不写旁挂文件。
 - 调用方若在没有负责 tee 被移除流的持久化层时转换已存储的 V4 世代，该世代的时序流就会丢失；这一保证由持久化层承担。
 - fork 路径必须从源会话目录复制 `streams.v1/`；导出归档已经会打包它。
 
 ### 开发备注
+
+<a id="dev-note"></a>
 
 无。
