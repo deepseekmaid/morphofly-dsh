@@ -29,7 +29,6 @@ import type {
 import { LlmAttemptId } from '@deepseek-ai/dsh-llm/brand'
 import {
   AssistantStreamAccumulator,
-  expandAssistantStream,
   type AssistantStreamRecord,
 } from '@deepseek-ai/dsh-llm/assistant-stream'
 import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -169,19 +168,6 @@ interface ModelProviderGroup {
   }[]
 }
 
-/* jscpd:ignore-start -- The standalone fixture mirrors host timing without importing a target implementation. */
-function isFixtureTokenDelta(chunk: StreamChunk): boolean {
-  switch (chunk.type) {
-    case 'text-delta':
-    case 'reasoning-delta':
-      return chunk.text !== ''
-    case 'tool-call-delta':
-      return chunk.argumentsDelta !== '' || chunk.name !== undefined
-    default:
-      return false
-  }
-}
-/* jscpd:ignore-end */
 
 interface FixtureSessionSummary {
   readonly sessionId: SessionId
@@ -850,26 +836,6 @@ function fixtureUsage(turn: number, step: number): TokenUsage {
   }
 }
 
-/** Build a lossless settled stream for static fixture messages. */
-function fixtureSettledStream(
-  message: AssistantMessage,
-  usage: TokenUsage,
-  time: number,
-): AssistantStreamRecord[] {
-  const stream: AssistantStreamRecord[] = []
-  for (const [index, block] of message.content.entries()) {
-    stream.push(
-      { type: 'chunk', time, chunk: { type: 'block-start', index, blockType: block.type } },
-      { type: 'chunk', time, chunk: { type: 'block-end', index, block } },
-    )
-  }
-  stream.push(
-    { type: 'chunk', time, chunk: { type: 'usage', usage } },
-    { type: 'chunk', time, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-  )
-  return stream
-}
-
 /** Rendered system prompt of the fx-alpha history: surface node 0. */
 const FIXTURE_SYSTEM_PROMPT = '你是 DeepSeek Harness 的 fixture 助手。用简洁的中文回答，并在需要时调用工具。'
 
@@ -896,7 +862,6 @@ function buildAlphaLog(presented = false): SessionEvent[] {
         data: {
           ...e.data,
           usage,
-          stream: fixtureSettledStream(e.data.message, usage, nextTime),
         },
       })
     } else {
@@ -1313,10 +1278,7 @@ interface FixtureUsageSample {
 /** Read one provider usage sample from either durable carrier. */
 function usageSampleOf(event: SessionEvent): FixtureUsageSample | undefined {
   if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') return undefined
-  let usage = event.type === 'assistant/message' ? event.data.usage : undefined
-  for (const member of expandAssistantStream(event.data.stream)) {
-    if (member.chunk.type === 'usage') usage = member.chunk.usage
-  }
+  const usage = event.data.usage
   return usage === undefined
     ? undefined
     : { turn: event.data.turn, step: event.data.step, usage }
@@ -1378,15 +1340,13 @@ function sessionStatsOf(log: readonly SessionEvent[]): {
         break
       case 'assistant/attempt': {
         if (openStep === null || openStep.turn !== event.data.turn || openStep.step !== event.data.step) break
-        const first = expandAssistantStream(event.data.stream)
-          .find(member => isFixtureTokenDelta(member.chunk))?.time
+        const first = event.data.firstTokenTime
         if (openStep.firstTokenTime === null && first !== undefined) openStep.firstTokenTime = first
         break
       }
       case 'assistant/message': {
         if (openStep === null || openStep.turn !== event.data.turn || openStep.step !== event.data.step) break
-        const first = expandAssistantStream(event.data.stream)
-          .find(member => isFixtureTokenDelta(member.chunk))?.time
+        const first = event.data.firstTokenTime
         if (openStep.firstTokenTime === null && first !== undefined) openStep.firstTokenTime = first
         value.llmMs += Math.max(0, event.time - openStep.startTime)
         if (openStep.firstTokenTime !== null) {
