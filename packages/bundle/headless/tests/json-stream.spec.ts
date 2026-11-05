@@ -21,7 +21,6 @@ function assistantMessage(content: unknown[], usage?: unknown): SessionEvent {
   return {
     type: 'assistant/message',
     data: {
-      stream: [],
       turn: 1,
       step: 1,
       ...usage === undefined ? {} : { usage },
@@ -34,11 +33,11 @@ function assistantMessage(content: unknown[], usage?: unknown): SessionEvent {
   } as unknown as SessionEvent
 }
 
-/** One discarded attempt whose stream reports the given usage sample. */
+/** One discarded attempt carrying the given usage sample. */
 function attemptWithUsage(usage: unknown): SessionEvent {
   return {
     type: 'assistant/attempt',
-    data: { turn: 1, step: 1, stream: [{ type: 'chunk', chunk: { type: 'usage', usage } }] },
+    data: { turn: 1, step: 1, usage },
   } as unknown as SessionEvent
 }
 
@@ -140,7 +139,7 @@ describe('--json projection', () => {
     const test = harness()
     test.emitSession({
       type: 'assistant/attempt',
-      data: { turn: 1, step: 1, stream: [] },
+      data: { turn: 1, step: 1 },
     } as unknown as SessionEvent)
     test.emitSession({ type: 'session/title', data: { title: 'ignored' } } as unknown as SessionEvent)
     expect(test.parsed().map(event => event.type)).toEqual(['session'])
@@ -366,14 +365,13 @@ describe('--json projection', () => {
     expect(usage).not.toHaveProperty('cacheWriteTokens')
   })
 
-  it('reads a message usage sample from its stream when the field is absent', () => {
+  it('omits the step total when the committed message omits usage', () => {
     const test = harness()
     test.emitSession({
       type: 'assistant/message',
       data: {
         turn: 1,
         step: 1,
-        stream: [{ type: 'chunk', chunk: { type: 'usage', usage: { inputTokens: 5, outputTokens: 1 } } }],
         message: {
           role: 'assistant',
           content: [{ type: 'text', text: 'hi' }],
@@ -382,7 +380,7 @@ describe('--json projection', () => {
       },
     } as unknown as SessionEvent)
     test.emitSession(stepEnd())
-    expect(test.parsed().at(-1)).toMatchObject({ usage: { inputTokens: 5, outputTokens: 1 } })
+    expect(test.parsed().at(-1)).toEqual({ type: 'status', phase: 'step_end', turn: 1, step: 1 })
   })
 
   it('omits the step total when a later attempt reports no usage sample', () => {
@@ -397,7 +395,7 @@ describe('--json projection', () => {
     const test = harness()
     test.emitSession({
       type: 'assistant/attempt',
-      data: { turn: 1, step: 1, stream: [] },
+      data: { turn: 1, step: 1 },
     } as unknown as SessionEvent)
     test.emitSession(assistantMessage([{ type: 'text', text: 'ok' }], { inputTokens: 1, outputTokens: 1 }))
     test.emitSession(stepEnd())

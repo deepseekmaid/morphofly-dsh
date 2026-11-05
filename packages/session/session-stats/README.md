@@ -117,7 +117,7 @@ None; the package never assembles or sends provider requests.
 These limits define what the figures describe and when the unit is absent. They are current package constraints.
 
 - **Steps count work attempted, not visible output** — a step that failed before producing visible content still closes with `step/end` and counts; a step interrupted by a crash counts after the session reloads, when crash recovery appends its synthetic `step/end`.
-- **A cancelled step is counted but untimed** — no assistant message assembles, so its partial stream time enters no wall-time figure; a max-tokens usage-host message conversely contributes model time the surface does not show.
+- **A cancelled step is counted but untimed** — no assistant message assembles, so neither its model time nor its first-token latency enters a wall-time figure; a max-tokens usage-host message conversely contributes model time the surface does not show.
 - **Counts are log-scoped, not surface-scoped** — steps whose messages were later compacted away stay counted; the figures describe the whole session, not the current model-visible surface.
 - **Mounted only where the projection registry is composed** — other assemblies serve no `sessionStats` key, and their consumers fall back to window-scoped counting.
 

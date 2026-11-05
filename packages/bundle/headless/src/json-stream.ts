@@ -9,7 +9,6 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { lastAssistantStreamChunk } from '@deepseek-ai/dsh-llm/assistant-stream'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
 /** Default per-string and per-key cap applied to every bounded projected payload. */
@@ -177,7 +176,7 @@ function resultText(blocks: readonly { type: string; text?: string }[]): string 
     .join('')
 }
 
-/** Provider token accounting for one step, as carried by `assistant/message`. */
+/** Provider token accounting for one step, as carried by Assistant settlements. */
 type StepUsage = NonNullable<SessionEvent<'assistant/message'>['data']['usage']>
 
 /** Accumulated usage for one step plus whether every attempt reported a sample. */
@@ -187,14 +186,9 @@ interface StepUsageState {
   complete: boolean
 }
 
-/** The usage a provider reported in one attempt's stream, if any. */
-function streamUsage(stream: SessionEvent<'assistant/message'>['data']['stream']): StepUsage | undefined {
-  return lastAssistantStreamChunk(stream, 'usage')?.usage
-}
-
 /**
- * Accumulate one step's usage across its attempts. A retried attempt keeps its
- * usage only in its `assistant/attempt` stream, so the committed message alone
+ * Accumulate one step's usage across its attempts. A retried attempt carries
+ * its usage on its `assistant/attempt` event, so the committed message alone
  * would under-report billed tokens. An attempt that reports no sample makes the
  * step total unknowable, so the step omits usage entirely rather than publish a
  * partial sum as if it were complete; an optional bucket is summed only when
@@ -266,11 +260,11 @@ export function projectJsonRun(
         return
       case 'assistant/attempt':
         // A retried attempt has no committed message; its billed tokens live
-        // only in the stream, so accumulate them into the step's total.
-        stepUsage = addUsage(stepUsage, streamUsage(event.data.stream))
+        // only on the attempt event, so accumulate them into the step's total.
+        stepUsage = addUsage(stepUsage, event.data.usage)
         return
       case 'assistant/message':
-        stepUsage = addUsage(stepUsage, event.data.usage ?? streamUsage(event.data.stream))
+        stepUsage = addUsage(stepUsage, event.data.usage)
         for (const block of event.data.message.content) {
           if (block.type === 'reasoning') write({ type: 'thinking', text: block.text })
           else if (block.type === 'text') write({ type: 'text', text: block.text })

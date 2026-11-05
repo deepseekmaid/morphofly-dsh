@@ -51,7 +51,7 @@ it('requires admitted human input and a failed settlement in the last step', () 
   const step: SessionEvent<'step/start'> = { type: 'step/start', seq: SessionSeq(5), time: 0, data: { turn: 1, step: 2 } }
   expect(fold([...prefix, step, base.at(-1)!]).ending).toBeNull()
   const success: SessionEvent<'assistant/message'> = { type: 'assistant/message', seq: SessionSeq(5), time: 0,
-    surfaceOp: 'append', data: { turn: 1, step: 1, stream: [], message: createAssistantMessage({
+    surfaceOp: 'append', data: { turn: 1, step: 1, message: createAssistantMessage({
       content: [{ type: 'text', text: 'done' }], source: { provider: 'test', model: 'test' },
     }) },
   }
@@ -99,11 +99,11 @@ it('publishes a complete-log result independently of the visible page and releas
   session.append('user/message', createUserMessage({ content: [{ type: 'text', text: 'task' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
   // A long failed turn exceeds the browser's 500-message page budget.
   for (let index = 0; index < 600; index++) {
-    session.append('assistant/message', { turn: 1, step: index + 1, stream: [], message: createAssistantMessage({ content: [{ type: 'text', text: 'progress' }], source: { provider: 'test', model: 'test' } }) }, { surfaceOp: 'append' })
+    session.append('assistant/message', { turn: 1, step: index + 1, message: createAssistantMessage({ content: [{ type: 'text', text: 'progress' }], source: { provider: 'test', model: 'test' } }) }, { surfaceOp: 'append' })
     session.append('step/end', { turn: 1, step: index + 1 })
     session.append('step/start', { turn: 1, step: index + 2 })
   }
-  session.append('assistant/attempt', { turn: 1, step: 601, stream: [] })
+  session.append('assistant/attempt', { turn: 1, step: 601 })
   const ending = session.append('turn/end', { turn: 1, reason: failed('SERVER') }).seq
   const page = paginate(history, undefined, 500, ending, { minMessages: 50, minTurns: 2 })
   expect(page.hasMore).toBe(true)

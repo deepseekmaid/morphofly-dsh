@@ -1,7 +1,6 @@
 /** V2 history records become one event-shaped Client value per wire record. */
 
 import { describe, expect, it } from 'vitest'
-import { ToolCallId } from '@deepseek-ai/dsh-llm/brand'
 import type { SessionHistoryRecord } from '../src/types.ts'
 import {
   historyEntries,
@@ -26,7 +25,7 @@ describe('Session history record projection', () => {
     expect(historyRecordLastSeq(ordinary)).toBe(7)
   })
 
-  it('retains one message with an embedded compact text stream', () => {
+  it('retains one settlement message without an embedded stream', () => {
     const message: SessionHistoryRecord = {
       type: 'event',
       event: {
@@ -42,7 +41,7 @@ describe('Session history record projection', () => {
             content: [{ type: 'text', text: 'abcd' }],
             source: { kind: 'model', provider: 'fixture', model: 'fixture-v2' },
           },
-          stream: [{ type: 'text-chunks', time0: 20, index: 0, dt: [1, 2, 3], texts: ['a', 'b', 'c', 'd'] }],
+          usage: { inputTokens: 5, outputTokens: 2 },
         },
       },
     }
@@ -58,7 +57,7 @@ describe('Session history record projection', () => {
     expect(historyRecordLastSeq(message)).toBe(11)
   })
 
-  it('preserves an attempt stream and optional tool-name absence', () => {
+  it('retains a settlement attempt with its first-token scalar and usage', () => {
     const attempt: SessionHistoryRecord = {
       type: 'event',
       event: {
@@ -68,14 +67,8 @@ describe('Session history record projection', () => {
         data: {
           turn: 2,
           step: 4,
-          stream: [{
-            type: 'tool-call-chunks',
-            time0: 200,
-            index: 1,
-            id: ToolCallId('call-1'),
-            dt: [2, 3],
-            args: ['', '{"x":', '1}'],
-          }],
+          firstTokenTime: 180,
+          usage: { inputTokens: 7, outputTokens: 1 },
         },
       },
     }
@@ -86,9 +79,8 @@ describe('Session history record projection', () => {
 
     if (event.type !== 'assistant/attempt') throw new Error('expected Assistant attempt event')
     expect(event).toBe(attempt.event)
-    const [record] = event.data.stream
-    expect(record).toMatchObject({ type: 'tool-call-chunks', id: 'call-1' })
-    expect(Object.hasOwn(record as object, 'name')).toBe(false)
+    expect(event.data.firstTokenTime).toBe(180)
+    expect(event.data.usage).toEqual({ inputTokens: 7, outputTokens: 1 })
     expect(historyRecordLastSeq(attempt)).toBe(20)
   })
 })

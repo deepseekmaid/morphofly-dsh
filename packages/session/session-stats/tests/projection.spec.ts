@@ -1,19 +1,19 @@
 /**
  * The `sessionStats` projection unit: mounting the plugin beside the
  * projection registry serves whole-log counts and wall times folded from step
- * boundaries, chunks, tool pairs, and assembled messages; compositions
- * without the registry are unaffected; unmounting the plugin removes the key
- * (HMR safety). The two counting regressions pinned here are the reasons the
- * fold counts step boundaries instead of assistant messages: a cancelled step
- * never assembles a message but still counts, and a max-tokens usage-host
- * message (empty content) adds no extra step. Wall-time math runs against the
- * exported definition directly, where event times are controlled.
+ * boundaries, settlement scalars, tool pairs, and assembled messages;
+ * compositions without the registry are unaffected; unmounting the plugin
+ * removes the key (HMR safety). The two counting regressions pinned here are
+ * the reasons the fold counts step boundaries instead of assistant messages: a
+ * cancelled step never assembles a message but still counts, and a max-tokens
+ * usage-host message (empty content) adds no extra step. Wall-time math runs
+ * against the exported definition directly, where event times are controlled.
  */
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { createMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
+import { createMessage } from '@deepseek-ai/dsh-llm'
+import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -38,7 +38,6 @@ function closeStep(session: Session, turn: number, step: number): number {
 /** Append the max-tokens usage-host shape: an assistant/message with empty content. */
 function appendEmptyAssistantMessage(session: Session, turn: number, step: number): void {
   session.append('assistant/message', {
-    stream: [],
     turn,
     step,
     message: createMessage({
@@ -154,16 +153,17 @@ function at(time: number, type: string, data: unknown): SessionEvent {
   return { type, seq: time, time, data } as unknown as SessionEvent
 }
 
+/** Build one attempt settlement: only the recorded first-token scalar is foldable. */
 function attemptAt(
   time: number,
-  chunks: readonly { readonly time: number; readonly chunk: StreamChunk }[],
+  firstTokenTime?: number,
   turn = 1,
   step = 1,
 ): SessionEvent {
   return at(time, 'assistant/attempt', {
     turn,
     step,
-    stream: chunks.map(member => ({ type: 'chunk', ...member })),
+    ...firstTokenTime === undefined ? {} : { firstTokenTime },
   })
 }
 
@@ -185,14 +185,14 @@ describe('sessionStats wall-time fold (controlled timestamps)', () => {
 
   function messageAt(
     time: number,
-    chunks: readonly { readonly time: number; readonly chunk: StreamChunk }[] = [],
+    firstTokenTime?: number,
     usage?: TokenUsage,
   ): SessionEvent {
     return at(time, 'assistant/message', {
       turn: 1,
       step: 1,
       message,
-      stream: chunks.map(member => ({ type: 'chunk', ...member })),
+      ...firstTokenTime === undefined ? {} : { firstTokenTime },
       ...usage === undefined ? {} : { usage },
     })
   }
@@ -200,9 +200,7 @@ describe('sessionStats wall-time fold (controlled timestamps)', () => {
   it('accrues model, first-token, and decode time from one fully recorded step', () => {
     expect(fold([
       at(1_000, 'step/start', { turn: 1, step: 1 }),
-      messageAt(4_800, [{
-        time: 1_800, chunk: { type: 'text-delta', index: 0, text: 'a' },
-      }], { inputTokens: 10, outputTokens: 60 }),
+      messageAt(4_800, 1_800, { inputTokens: 10, outputTokens: 60 }),
       at(4_900, 'step/end', { turn: 1, step: 1 }),
     ])).toEqual(totals({
       turns: 1, steps: 1, llmMs: 3_800, ttftMs: 800, ttftSteps: 1, decodeMs: 3_000, decodeTokens: 60,
@@ -212,71 +210,47 @@ describe('sessionStats wall-time fold (controlled timestamps)', () => {
   it('keeps the first attempt token boundary across an in-step retry (window resetForRetry parity)', () => {
     expect(fold([
       at(1_000, 'step/start', { turn: 1, step: 1 }),
-      attemptAt(1_100, [{
-        time: 1_100, chunk: { type: 'text-delta', index: 0, text: '' },
-      }]),
-      attemptAt(2_000, [{
-        time: 1_200, chunk: { type: 'reasoning-delta', index: 0, text: 'x' },
-      }]),
-      attemptAt(2_500, [{
-        time: 1_500, chunk: { type: 'text-delta', index: 0, text: 'later' },
-      }]),
+      // A retry attempt whose stream carried no first token reports no scalar.
+      attemptAt(1_100),
+      attemptAt(2_000, 1_200),
+      // A later attempt cannot move the already-recorded first-token boundary.
+      attemptAt(2_500, 1_500),
       at(2_000, 'llm/retry', { turn: 1, step: 1 }),
-      messageAt(5_000, [{
-        time: 3_000, chunk: { type: 'text-delta', index: 0, text: 'y' },
-      }]),
+      // The assembled message's own scalar is the fallback, not an override.
+      messageAt(5_000, 3_000),
       at(5_100, 'step/end', { turn: 1, step: 1 }),
     ])).toEqual(totals({ turns: 1, steps: 1, llmMs: 4_000, ttftMs: 200, ttftSteps: 1 }))
   })
 
-  it('ignores empty deltas, non-token chunks, and chunks outside the open step', () => {
+  it('ignores attempts outside the open step and a message without a first token', () => {
     expect(fold([
       // Attempt before any step/start: no open boundary.
-      attemptAt(500, [{
-        time: 500, chunk: { type: 'text-delta', index: 0, text: 'stray' },
-      }]),
+      attemptAt(500, 500),
       at(1_000, 'step/start', { turn: 1, step: 1 }),
-      attemptAt(1_300, [{
-        time: 1_300, chunk: { type: 'text-delta', index: 0, text: 'other' },
-      }], 2, 9),
-      messageAt(2_000, [
-        { time: 1_100, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-        { time: 1_200, chunk: { type: 'text-delta', index: 0, text: '' } },
-        { time: 1_400, chunk: { type: 'text-delta', index: 0, text: 'first' } },
-      ]),
+      attemptAt(1_300, 1_300, 2, 9),
+      messageAt(2_000, 1_400),
       at(2_100, 'step/end', { turn: 1, step: 1 }),
     ])).toEqual(totals({ turns: 1, steps: 1, llmMs: 1_000, ttftMs: 400, ttftSteps: 1 }))
   })
 
-  it('uses non-empty Tool-call names or arguments as the first token', () => {
+  it('uses the message scalar when no attempt recorded a token', () => {
     expect(fold([
       at(1_000, 'step/start', { turn: 1, step: 1 }),
-      messageAt(2_000, [
-        { time: 1_100, chunk: { type: 'tool-call-delta', index: 0, id: ToolCallId('call-1'), argumentsDelta: '' } },
-        {
-          time: 1_200,
-          chunk: { type: 'tool-call-delta', index: 0, id: ToolCallId('call-1'), name: 'read', argumentsDelta: '' },
-        },
-      ]),
+      messageAt(2_000, 1_300),
       at(2_100, 'step/end', { turn: 1, step: 1 }),
-    ])).toEqual(totals({ turns: 1, steps: 1, llmMs: 1_000, ttftMs: 200, ttftSteps: 1 }))
+    ])).toEqual(totals({ turns: 1, steps: 1, llmMs: 1_000, ttftMs: 300, ttftSteps: 1 }))
 
     expect(fold([
       at(1_000, 'step/start', { turn: 1, step: 1 }),
-      messageAt(2_000, [{
-        time: 1_300,
-        chunk: { type: 'tool-call-delta', index: 0, id: ToolCallId('call-1'), argumentsDelta: '{' },
-      }]),
+      messageAt(2_000),
       at(2_100, 'step/end', { turn: 1, step: 1 }),
-    ])).toEqual(totals({ turns: 1, steps: 1, llmMs: 1_000, ttftMs: 300, ttftSteps: 1 }))
+    ])).toEqual(totals({ turns: 1, steps: 1, llmMs: 1_000 }))
   })
 
   it('leaves a cancelled step untimed: counted by step/end, no assembled message to accrue from', () => {
     expect(fold([
       at(1_000, 'step/start', { turn: 1, step: 1 }),
-      attemptAt(1_500, [{
-        time: 1_500, chunk: { type: 'text-delta', index: 0, text: 'partial' },
-      }]),
+      attemptAt(1_500, 1_500),
       at(2_000, 'step/end', { turn: 1, step: 1 }),
     ])).toEqual(totals({ turns: 1, steps: 1 }))
   })
@@ -331,9 +305,7 @@ describe('sessionStats wall-time fold (controlled timestamps)', () => {
     const events = [
       at(1_000, 'step/start', { turn: 1, step: 1 }),
       // A malformed provider report: guarded like the window fold guards node usage.
-      messageAt(2_000, [{
-        time: 1_400, chunk: { type: 'text-delta', index: 0, text: 'a' },
-      }], { inputTokens: 1, outputTokens: -5 }),
+      messageAt(2_000, 1_400, { inputTokens: 1, outputTokens: -5 }),
     ]
     expect(fold([...events, at(2_100, 'step/end', { turn: 1, step: 1 })]))
       .toEqual(totals({ turns: 1, steps: 1, llmMs: 1_000, ttftMs: 400, ttftSteps: 1 }))

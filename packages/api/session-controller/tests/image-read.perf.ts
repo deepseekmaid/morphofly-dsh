@@ -15,7 +15,6 @@ import { Context } from '@deepseek-ai/cordis'
 import { LocalAttachmentStore } from '@deepseek-ai/dsh-attachment-local'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { MessageId, ToolCallId } from '@deepseek-ai/dsh-llm'
-import { AssistantStreamAccumulator } from '@deepseek-ai/dsh-llm/assistant-stream'
 import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import SessionQueryEngine from '@deepseek-ai/dsh-session-query'
 import { ApiSessionAgentController } from '../src/agent.ts'
@@ -106,15 +105,8 @@ function populate(session: Session, turns: number, refs: readonly ImageAttachmen
         source: { kind: 'tool', callId }, content: [{ type: 'text', text: `module ${turn}\n` + 'export const value = 42;\n'.repeat(80) }] },
     }, { surfaceOp: 'append', sourceEventSeqs: [call.seq] })
     const block = { type: 'text' as const, text: `Result ${turn}. ` + 'Synthetic response. '.repeat(40) }
-    const stream = new AssistantStreamAccumulator()
-    stream.push({ time: 1_700_000_000_000 + turn, chunk: { type: 'block-start', index: 0, blockType: 'text' } })
-    for (let offset = 0; offset < block.text.length; offset += 32) {
-      stream.push({ time: 1_700_000_000_001 + turn + offset, chunk: { type: 'text-delta', index: 0, text: block.text.slice(offset, offset + 32) } })
-    }
-    stream.push({ time: 1_700_000_001_000 + turn, chunk: { type: 'block-end', index: 0, block } })
-    stream.push({ time: 1_700_000_001_001 + turn, chunk: { type: 'finish', reason: { kind: 'stop' } } })
     session.append('assistant/message', {
-      turn, step: 1, stream: [...stream.snapshot()],
+      turn, step: 1, firstTokenTime: 1_700_000_000_001 + turn,
       message: { id: MessageId(`reply-${turn}`), role: 'assistant', content: [block], source: { kind: 'model', provider: 'synthetic', model: 'synthetic' } },
     }, { surfaceOp: 'append' })
     session.append('step/end', { turn, step: 1 })

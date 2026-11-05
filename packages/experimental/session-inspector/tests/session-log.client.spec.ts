@@ -67,19 +67,19 @@ it('maps picked Chat identities to tool calls, reasoning blocks, and loaded Step
     durable(1),
     { type: 'event', event: { type: 'step/start', seq: SessionSeq(2), time: 2, data: { turn: 1, step: 1 } } },
     { type: 'event', event: { type: 'assistant/attempt', seq: SessionSeq(3), time: 3,
-      data: { turn: 1, step: 1, stream: [{ type: 'chunk', time: 3, chunk: { type: 'block-start', index: 0, blockType: 'reasoning' } }] } } },
+      data: { turn: 1, step: 1 } } },
     { type: 'event', event: { type: 'tool/call', seq: SessionSeq(4), time: 4,
       data: { turn: 1, step: 1, callId: 'call-1' as ToolCallId, name: 'bash', arguments: '{}' } } },
   ], false)
   const model = new SessionLogModel(source)
   expect(model.pick({ callId: 'call-1', anchorSeq: 3 })).toBe('event:4')
-  expect(model.pick({ anchorSeq: 3, groupPart: 'reasoning' })).toBe('event:3/chunk:0')
+  // V5 settlements keep no embedded stream, so a reasoning part resolves to the settlement root.
+  expect(model.pick({ anchorSeq: 3, groupPart: 'reasoning' })).toBe('event:3')
   expect(model.pick({ nodeKind: 'assistant-step', turn: 1, step: 1 })).toBe('event:3')
   expect(model.pick({ turn: 1, step: 1 })).toBe('event:2')
   expect(model.pick({ turn: 1 })).toBe('event:1')
   expect(model.pick({ turn: 9 })).toBeUndefined()
-  expect(model.chatAnchor('event:3/chunk:0')).toMatchObject({ event: { type: 'assistant/attempt', seq: 3 },
-    chunk: { type: 'block-start', blockType: 'reasoning' } })
+  expect(model.chatAnchor('event:3/chunk:0')).toBeUndefined()
   expect(model.chatAnchor('missing')).toBeUndefined()
   source.append(delta(5, 'live'))
   expect(model.pick({ anchorSeq: 5 })).toBe('attempt:attempt-1')
@@ -122,21 +122,18 @@ it('nests interleaved reasoning and tool deltas under their block-start and fold
   expect(model.row('attempt:attempt-1/chunk:0').getSnapshot()?.collapsedSummary).toBe('blockType: reasoning · firstsecond')
 })
 
-it('restores closed historical blocks collapsed and leaves an unfinished block open', () => {
+it('shows no durable settlement chunk rows because V5 keeps the stream in the Session sidecar', () => {
   const source = new MutableSessionEventSource()
-  source.replace([{ type: 'event', event: { type: 'assistant/attempt', seq: SessionSeq(1), time: 5,
-    data: { turn: 1, step: 1, stream: [
-      { type: 'chunk', time: 1, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-      { type: 'text-chunks', index: 0, time0: 2, dt: [], texts: ['closed'] },
-      { type: 'chunk', time: 3, chunk: { type: 'block-end', index: 0, block: { type: 'text', text: 'closed' } } },
-      { type: 'chunk', time: 4, chunk: { type: 'block-start', index: 1, blockType: 'reasoning' } },
-      { type: 'reasoning-chunks', index: 1, time0: 5, dt: [], texts: ['unfinished'] },
-    ] } } }], false)
+  source.replace([
+    durable(1),
+    { type: 'event', event: { type: 'assistant/attempt', seq: SessionSeq(2), time: 5,
+      data: { turn: 1, step: 1 } } },
+  ], false)
   const model = new SessionLogModel(source)
   const hierarchy = new InspectorTableHierarchy(model.getSnapshot(), new Map())
-  expect(hierarchy.rows.map(row => row.key)).toEqual(['event:1', 'event:1/chunk:0', 'event:1/chunk:3', 'event:1/chunk:4'])
-  expect(hierarchy.stickyIndexes(3)).toEqual([0, 2])
-  expect(model.row('event:1/chunk:3').getSnapshot()?.collapsedSummary).toBe('blockType: reasoning · unfinished')
+  expect(hierarchy.rows.map(row => row.key)).toEqual(['event:1', 'event:2'])
+  expect(model.getSnapshot().some(row => row.key.includes('/chunk:'))).toBe(false)
+  expect(model.chatAnchor('event:2/chunk:0')).toBeUndefined()
 })
 
 it('groups live deltas even when another log entry arrives between them', () => {
@@ -159,31 +156,19 @@ it('groups live deltas even when another log entry arrives between them', () => 
   expect(retained.getSnapshot()).toBe(value)
 })
 
-it('replaces transient rows with lossless text, reasoning, and tool-call stream children', () => {
+it('retires transient chunk rows when the settlement arrives without a durable stream', () => {
   const source = new MutableSessionEventSource()
   source.replace([delta(1, 'live')], false)
   const model = new SessionLogModel(source)
   onTestFinished(model.subscribe(vi.fn()))
   const transient = model.row('attempt:attempt-1/chunk:0')
   source.settleAssistant(attemptId, { type: 'event', event: {
-    type: 'assistant/attempt', seq: SessionSeq(2), time: 50, data: { turn: 1, step: 1, stream: [
-      { type: 'text-chunks', index: 0, time0: 10, dt: [2], texts: ['a', 'b'] },
-      { type: 'reasoning-chunks', index: 1, time0: 20, dt: [], texts: ['thinking'] },
-      { type: 'tool-call-chunks', index: 2, id: 'call-1' as ToolCallId, time0: 30, dt: [3], args: ['{"x":', '1}'] },
-    ] },
+    type: 'assistant/attempt', seq: SessionSeq(2), time: 50, data: { turn: 1, step: 1 },
   } })
-  const rows = model.getSnapshot()
-  expect(rows).toHaveLength(6)
-  expect(rows.slice(1).every(row => row.depth === 1 && row.parent === 'attempt:attempt-1')).toBe(true)
-  expect(rows.slice(1).map(row => model.row(row.key).getSnapshot()?.time)).toEqual([10, 12, 20, 30, 33])
-  expect(model.row('attempt:attempt-1/chunk:3').getSnapshot()?.value).toMatchObject({ type: 'tool-call-delta', argumentsDelta: '{"x":' })
+  expect(model.getSnapshot().map(row => row.key)).toEqual(['attempt:attempt-1'])
   expect(model.row('attempt:attempt-1').getSnapshot()).toMatchObject({ type: 'assistant/attempt', identity: '2' })
-  expect(model.row('attempt:attempt-1/chunk:0')).toBe(transient)
-  expect(model.chatAnchor('attempt:attempt-1/chunk:0')).toMatchObject({ event: { type: 'assistant/attempt', seq: 2 },
-    chunk: { type: 'text-delta', text: 'a' } })
-  const child = transient.getSnapshot()
-  source.prepend([durable(0)], false)
-  expect(model.row('attempt:attempt-1/chunk:0').getSnapshot()).toBe(child)
+  expect(model.chatAnchor('attempt:attempt-1/chunk:0')).toBeUndefined()
+  expect(transient.getSnapshot()).toBeUndefined()
 })
 
 it('stops observing hidden tables and catches up when they reopen', () => {
@@ -205,7 +190,7 @@ it('releases settled identities outside the loaded window while retaining loaded
   const model = new SessionLogModel(source)
   onTestFinished(model.subscribe(vi.fn()))
   const first = { type: 'event', event: { type: 'assistant/attempt', seq: SessionSeq(2), time: 2,
-    data: { turn: 1, step: 1, stream: [{ type: 'text-chunks', index: 0, time0: 1, dt: [], texts: ['first'] }] } },
+    data: { turn: 1, step: 1 } },
   } satisfies SessionEventLikeEntry
   source.settleAssistant(attemptId, first)
   const removed = model.row('attempt:attempt-1')
@@ -213,7 +198,7 @@ it('releases settled identities outside the loaded window while retaining loaded
   source.append({ type: 'transient', event: { type: 'assistant/live-chunk', seq: 3, time: 3,
     data: { attemptId: secondAttempt, turn: 1, step: 2, chunk: { type: 'text-delta', index: 0, text: 'second' } } } })
   const second = { type: 'event', event: { type: 'assistant/attempt', seq: SessionSeq(4), time: 4,
-    data: { turn: 1, step: 2, stream: [{ type: 'text-chunks', index: 0, time0: 3, dt: [], texts: ['second'] }] } },
+    data: { turn: 1, step: 2 } },
   } satisfies SessionEventLikeEntry
   source.settleAssistant(secondAttempt, second)
   const retained = model.row('attempt:attempt-2')
@@ -239,7 +224,7 @@ it('shares observation and accepts a settlement whose live frames were never loa
   onTestFinished(() => { for (const stop of stops.splice(0)) stop() })
   stops.pop()!()
   source.settleAssistant(attemptId, { type: 'event', event: { type: 'assistant/attempt', seq: SessionSeq(1), time: 1,
-    data: { turn: 1, step: 1, stream: [] } } })
+    data: { turn: 1, step: 1 } } })
   expect(model.getSnapshot().map(row => row.key)).toEqual(['event:1'])
   expect(model.pick({ anchorSeq: 1, groupPart: 'reasoning' })).toBe('event:1')
   expect(model.chatAnchor('event:1/chunk:0')).toBeUndefined()

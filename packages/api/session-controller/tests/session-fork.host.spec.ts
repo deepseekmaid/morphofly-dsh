@@ -582,7 +582,6 @@ describe('sessions.fork', () => {
         seq: 3,
         time: 4,
         data: {
-          stream: [],
           turn: 1,
           step: 1,
           message: createMessage({

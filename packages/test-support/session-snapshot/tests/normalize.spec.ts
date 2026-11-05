@@ -766,13 +766,7 @@ describe('normalizeSessionSnapshot', () => {
         data: {
           turn: 1,
           step: 1,
-          stream: [{
-            type: 'reasoning-chunks',
-            time0: 0,
-            index: 0,
-            dt: [0, 0, 0, 0, 0],
-            texts: ['a', 'b', 'c', 'd', 'e', 'f'],
-          }],
+          firstTokenTime: 0,
         },
       }),
       '',

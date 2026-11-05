@@ -20,6 +20,7 @@ import {
   sessionFormatCatalog,
 } from '@deepseek-ai/dsh-session-format-catalog'
 import type {
+  AssistantStreamRecord,
   ContentBlock,
   GenerateOptions,
   LlmImageRequestPricing,
@@ -56,6 +57,35 @@ interface ParsedSessionFixture {
   readonly events: SessionEvent[]
   readonly artifact: ReturnType<ReturnType<typeof sessionFormatCatalog.createRestore>['finish']>
   readonly sourceHeader: Readonly<Record<string, unknown>>
+  /** Embedded streams recovered from the source rows while the released fixture was still V4. */
+  readonly readAssistantStream: AssistantStreamReader
+}
+
+/**
+ * Reads one settlement's exact compact Assistant stream from storage outside
+ * the event log.
+ *
+ * Session V5 moved Assistant streams from settlement events into Session-local
+ * sidecars. Fixture rows recorded before V5 still embed their streams, and
+ * {@link parseSessionLog} recovers those into this reader; a V5 recording needs
+ * a caller that can read the sidecar. Derivation fails loud when neither is
+ * available.
+ * @param event - the settlement event whose stream to read.
+ * @returns the event's compact stream records, or undefined when storage has none.
+ */
+export type AssistantStreamReader = (event: SessionEvent) => readonly AssistantStreamRecord[] | undefined
+
+/** Recover the stream payload a released settlement carries in its data object. */
+function embeddedStream(data: object): readonly AssistantStreamRecord[] | undefined {
+  const stream: unknown = Reflect.get(data, 'stream')
+  return Array.isArray(stream) ? stream as readonly AssistantStreamRecord[] : undefined
+}
+
+/** Recover one released (pre-V5) physical row's embedded Assistant stream. */
+function embeddedRowStream(row: Readonly<Record<string, unknown>>): readonly AssistantStreamRecord[] | undefined {
+  if (row['type'] !== 'assistant/message' && row['type'] !== 'assistant/attempt') return undefined
+  const data = row['data']
+  return data !== null && typeof data === 'object' && !Array.isArray(data) ? embeddedStream(data) : undefined
 }
 
 /**
@@ -165,6 +195,14 @@ export interface ReplayConfig {
    * aborting mid-wait cancels the stream like any other abort.
    */
   paceMs?: number
+  /**
+   * Optional reader for the exact per-chunk Assistant streams Session V5 keeps
+   * outside the event log ({@link AssistantStreamReader}). Fixture rows recorded
+   * before V5 still embed their streams and derive without it; a fresh V5
+   * recording needs sidecar storage access here and derivation otherwise fails
+   * with the explicit V5 sidecar limitation.
+   */
+  readAssistantStream?: AssistantStreamReader
 }
 
 /**
@@ -222,6 +260,10 @@ function parseSessionFixture(text: string): ParsedSessionFixture {
   let restore: ReturnType<typeof sessionFormatCatalog.createRestore> | undefined
   const rowLines: number[] = []
   const eventLines: number[] = []
+  // Released fixtures embed the streams that V5 migration strips from their
+  // events; keep them in row order so the migrated settlements can reclaim
+  // them (migrations may renumber sequences as they insert events).
+  const embeddedStreams: (readonly AssistantStreamRecord[] | undefined)[] = []
   let bodyKind: 'complete' | 'projected' | undefined
   let nextSeq = 0
   for (const [index, line] of text.split(/\r?\n/).entries()) {
@@ -270,6 +312,8 @@ function parseSessionFixture(text: string): ParsedSessionFixture {
       record[seqKey] = nextSeq
       record[timeKey] = 0
     }
+    const rowStream = embeddedRowStream(record)
+    if (rowStream !== undefined) embeddedStreams.push(rowStream)
     const cardinality = physicalRowCardinality(record)
     rowLines.push(lineNumber)
     eventLines.push(...Array.from({ length: cardinality }, () => lineNumber))
@@ -284,7 +328,7 @@ function parseSessionFixture(text: string): ParsedSessionFixture {
     throw new Error('session snapshot must start with a session header')
   }
   try {
-    return parsedSessionFixture(restore.finish(), sourceHeader)
+    return parsedSessionFixture(restore.finish(), sourceHeader, embeddedStreams)
   } catch (error: unknown) {
     throw fixtureFormatError(error, headerLineNumber, rowLines, eventLines)
   }
@@ -294,14 +338,29 @@ function parseSessionFixture(text: string): ParsedSessionFixture {
 function parsedSessionFixture(
   artifact: ParsedSessionFixture['artifact'],
   sourceHeader: Readonly<Record<string, unknown>>,
+  embeddedStreams: readonly (readonly AssistantStreamRecord[] | undefined)[],
 ): ParsedSessionFixture {
+  const events = [...artifact.events] as unknown as SessionEvent[]
+  const settlements = events.filter(event => event.type === 'assistant/message' || event.type === 'assistant/attempt')
+  // One released settlement row becomes exactly one migrated settlement event;
+  // an equal count means row order is settlement order. Legacy chunk logs
+  // synthesize settlements that had no row stream, so they stay unclaimed and
+  // derivation reports the V5 sidecar limitation instead of guessing.
+  const streamsBySeq = new Map<number, readonly AssistantStreamRecord[]>()
+  if (settlements.length === embeddedStreams.length) {
+    for (const [index, event] of settlements.entries()) {
+      const stream = embeddedStreams[index]
+      if (stream !== undefined) streamsBySeq.set(event.seq, stream)
+    }
+  }
   return {
     id: artifact.header.id,
     createdAt: artifact.header.createdAt,
     inheritedEventCount: SessionLogOffset(artifact.inheritedEventCount),
-    events: [...artifact.events] as unknown as SessionEvent[],
+    events,
     artifact,
     sourceHeader,
+    readAssistantStream: event => streamsBySeq.get(event.seq),
   }
 }
 
@@ -455,16 +514,26 @@ export function parseSessionHeader(text: string): {
 /**
  * Reconstruct the per-`stream()` replay script from a recorded session log.
  *
- * Reads one embedded stream from each Assistant settlement. A `compaction/summary` explicitly marked
- * as one local LLM-stream call becomes a canonical successful stream from its
- * complete `rawOutput` at the summary's log position. A
- * missing assistant terminator means the live stream threw, so derivation
- * rejects and the scenario must provide an explicit override. Multiple calls
- * may share one turn and step when the loop retries.
+ * Expands one exact Assistant stream per recorded model call. A
+ * `compaction/summary` explicitly marked as one local LLM-stream call becomes a
+ * canonical successful stream from its complete `rawOutput` at the summary's
+ * log position. A missing assistant terminator means the live stream threw, so
+ * derivation rejects and the scenario must provide an explicit override.
+ * Multiple calls may share one turn and step when the loop retries.
+ *
+ * Session V5 keeps Assistant streams outside its settlement events, so a V5
+ * recording needs {@link AssistantStreamReader} storage access; released
+ * fixtures whose rows still embed the stream derive without it. Known
+ * limitation: a consumer that cannot read the sidecar gets the explicit
+ * `V5 replay requires a sidecar stream reader` failure instead of a replay.
  * @param events - the recorded session's events.
+ * @param readAssistantStream - optional reader for the exact streams a V5 log keeps in sidecar storage.
  * @returns one `chunks` entry per recorded model call, in call order.
  */
-export function deriveReplayScript(events: SessionEvent[]): ReplayEntry[] {
+export function deriveReplayScript(
+  events: SessionEvent[],
+  readAssistantStream?: AssistantStreamReader,
+): ReplayEntry[] {
   const script: ReplayEntry[] = []
   const close = (key: string | undefined, chunks: StreamChunk[]): void => {
     if (chunks.length === 0) return
@@ -501,7 +570,14 @@ export function deriveReplayScript(events: SessionEvent[]): ReplayEntry[] {
       continue
     }
     if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') continue
-    const chunks = expandAssistantStream(event.data.stream).map(member => member.chunk)
+    const stream = readAssistantStream?.(event) ?? embeddedStream(event.data)
+    if (stream === undefined) {
+      throw new Error(
+        `llm-replay: V5 replay requires a sidecar stream reader for ${event.type} at seq ${String(event.seq)}; `
+        + 'Session V5 keeps Assistant streams outside the event log, so pass a readAssistantStream reader',
+      )
+    }
+    const chunks = expandAssistantStream(stream).map(member => member.chunk)
     close(`${String(event.data.turn)}/${String(event.data.step)}`, chunks)
   }
   return script
@@ -767,7 +843,7 @@ function resolveReplayScript(
   if (config.overrideFile !== undefined && existsSync(config.overrideFile)) {
     const doc = readOverrideDoc(JSON.parse(readFileSync(config.overrideFile, 'utf8')) as unknown, config.overrideFile)
     if (Array.isArray(doc)) return doc
-    const script = deriveScriptFromFixture(config.file, fixture)
+    const script = deriveScriptFromFixture(config, fixture)
     const derivedLength = script.length
     const seenIndexes = new Set<number>()
     for (const patch of doc.patches) {
@@ -785,15 +861,27 @@ function resolveReplayScript(
     }
     return script
   }
-  return deriveScriptFromFixture(config.file, fixture)
+  return deriveScriptFromFixture(config, fixture)
+}
+
+/** Consult the caller's sidecar reader first, then the released fixture's recovered row streams. */
+function mergedStreamReader(
+  preferred: AssistantStreamReader | undefined,
+  fallback: AssistantStreamReader,
+): AssistantStreamReader {
+  if (preferred === undefined) return fallback
+  return event => preferred(event) ?? fallback(event)
 }
 
 /** Derive a script from an already migrated fixture, failing loud when it is absent. */
-function deriveScriptFromFixture(file: string, fixture: ParsedSessionFixture | undefined): ReplayEntry[] {
+function deriveScriptFromFixture(config: ReplayConfig, fixture: ParsedSessionFixture | undefined): ReplayEntry[] {
   if (fixture === undefined) {
-    throw new Error(`llm-replay: fixture not found: ${file} — run \`pnpm run test:snapshot:record\` first`)
+    throw new Error(`llm-replay: fixture not found: ${config.file} — run \`pnpm run test:snapshot:record\` first`)
   }
-  return deriveReplayScript(fixture.events)
+  return deriveReplayScript(
+    fixture.events,
+    mergedStreamReader(config.readAssistantStream, fixture.readAssistantStream),
+  )
 }
 
 /**
@@ -826,7 +914,10 @@ export function loadSessionScripts(config: ReplayConfig): SessionScript[] {
     children.push({
       recordedId: fixture.id,
       createdAt: fixture.createdAt,
-      entries: deriveReplayScript(ownEvents),
+      entries: deriveReplayScript(
+        ownEvents,
+        mergedStreamReader(config.readAssistantStream, fixture.readAssistantStream),
+      ),
       primary: false,
     })
   }

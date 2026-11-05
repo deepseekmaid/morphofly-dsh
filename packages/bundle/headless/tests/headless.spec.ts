@@ -105,7 +105,6 @@ function appendTurn(
   session.append('user/message', message, { surfaceOp: 'append' })
   if (text !== undefined) {
     session.append('assistant/message', {
-      stream: [],
       turn,
       step: 1,
       message: createAssistantMessage({
@@ -595,7 +594,6 @@ describe('headless runner', () => {
         emitChunk(agent, { type: 'text-delta', index: 2, text: 'done' })
         emitChunk(agent, { type: 'block-end', index: 2, block: { type: 'text', text: 'done' } })
         session.append('assistant/message', {
-          stream: [],
           turn: 1,
           step: 1,
           message: createAssistantMessage({
@@ -1202,7 +1200,6 @@ describe('headless runner', () => {
         emitChunk(agent, { type: 'reasoning-delta', index: 0, text: 'discarded attempt' })
         emitChunk(agent, { type: 'text-delta', index: 0, text: 'discarded answer' })
         session.append('assistant/message', {
-          stream: [],
           turn: 1,
           step: 1,
           usage: { inputTokens: 3, outputTokens: 4 },

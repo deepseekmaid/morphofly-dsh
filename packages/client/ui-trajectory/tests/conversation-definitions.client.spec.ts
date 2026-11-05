@@ -9,7 +9,7 @@ import type {
 import { ConversationNodeAssembler, inspectRequestPrompt } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import { inspectSystemPrompt } from '../../ui-conversation/src/client/contract/system-prompt.ts'
-import { AssistantStreamAccumulator } from '@deepseek-ai/dsh-llm/assistant-stream'
+import { AssistantStreamAccumulator, assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm/assistant-stream'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { registerTrajectoryAssistantDefinition } from '../src/client/trajectory-assistant-definition.ts'
 import { registerTrajectoryCompactionDefinitions } from '../src/client/trajectory-compaction-definition.ts'
@@ -64,16 +64,13 @@ function at(
   data: unknown,
   extra: Record<string, unknown> = {},
 ): SessionLiveEventEntry {
-  const payload = type === 'assistant/message' && typeof data === 'object' && data !== null
-    ? { ...(data as Record<string, unknown>), stream: (data as { stream?: unknown }).stream ?? [] }
-    : data
   return {
     type: 'event',
     event: {
       seq,
       time: 1_700_000_000_000 + seq,
       type,
-      data: payload,
+      data,
       ...extra,
     } as unknown as SessionEvent,
   }
@@ -89,10 +86,11 @@ function packedInputs(entries: readonly SessionLiveEventEntry[]): SessionEventLi
   } | undefined
   const flush = (): void => {
     if (active === undefined) return
+    const firstTokenTime = assistantStreamFirstTokenTime(active.stream.snapshot())
     output.push(at(active.last.event.seq, 'assistant/attempt', {
       turn: active.turn,
       step: active.step,
-      stream: active.stream.snapshot(),
+      ...firstTokenTime === undefined ? {} : { firstTokenTime },
     }, { time: active.last.event.time }))
     active = undefined
   }
@@ -123,11 +121,12 @@ function packedInputs(entries: readonly SessionLiveEventEntry[]): SessionEventLi
       && current !== undefined
       && current.turn === event.data.turn
       && current.step === event.data.step) {
+      const firstTokenTime = assistantStreamFirstTokenTime(current.stream.snapshot())
       output.push({
         ...entry,
         event: {
           ...entry.event,
-          data: { ...entry.event.data, stream: current.stream.snapshot() },
+          data: { ...entry.event.data, ...firstTokenTime === undefined ? {} : { firstTokenTime } },
         } as SessionEvent,
       })
       active = undefined
@@ -526,7 +525,7 @@ describe('Trajectory conversation Definitions', () => {
     const runningAttempt = packedHistory.at(-1)?.event
     expect(runningAttempt?.type).toBe('assistant/attempt')
     if (runningAttempt?.type !== 'assistant/attempt') throw new Error('expected packed running attempt')
-    expect(runningAttempt.data.stream.length).toBeGreaterThan(0)
+    expect(runningAttempt.data.firstTokenTime).toBe(1_700_000_000_000 + 4)
     const runningPacked = snapshot(assembler(packedHistory))
     expect(runningScalar.partial?.blocks).toEqual([
       { kind: 'text', text: '  answer' },
@@ -581,7 +580,9 @@ describe('Trajectory conversation Definitions', () => {
     expect(finalizedInputs.filter(input => input.event.type === 'assistant/attempt')).toHaveLength(1)
     const finalizedMessage = finalizedInputs.find(input => input.event.type === 'assistant/message')?.event
     if (finalizedMessage?.type !== 'assistant/message') throw new Error('expected packed final message')
-    expect(finalizedMessage.data.stream.length).toBeGreaterThan(0)
+    // The message reports the first token of its own post-retry attempt; the Step keeps the
+    // earlier attempt's scalar, so the assembled node still reports 3_000 below.
+    expect(finalizedMessage.data.firstTokenTime).toBe(1_700_000_000_000 + 28)
     const finalizedPacked = snapshot(assembler(finalizedInputs))
     expect(finalizedPacked.eventNodes.find(node => node.kind === 'assistant')).toMatchObject({
       blocks: [{ kind: 'text', text: 'done' }],
@@ -618,7 +619,7 @@ describe('Trajectory conversation Definitions', () => {
     const namedToolInputs = packedInputs(namedToolHistory)
     const namedToolMessage = namedToolInputs.find(input => input.event.type === 'assistant/message')?.event
     if (namedToolMessage?.type !== 'assistant/message') throw new Error('expected packed named-tool message')
-    expect(namedToolMessage.data.stream.length).toBeGreaterThan(0)
+    expect(namedToolMessage.data.firstTokenTime).toBe(4_000)
     const namedToolPacked = snapshot(assembler(namedToolInputs))
     expect(namedToolPacked.eventNodes.find(node => node.kind === 'assistant')).toMatchObject({
       blocks: [{ kind: 'tool-call', callId: 'call-2', name: 'read', argsRaw: '' }],

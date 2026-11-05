@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
+import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { deriveTurnTokenUsage } from '../src/turn-usage.ts'
 
@@ -26,17 +26,10 @@ function message(
   provider = 'deepseek',
   model = 'deepseek-chat',
   step = 1,
-  streamTokenUsage = tokenUsage,
 ) {
   return event(seq, 'assistant/message', {
     turn: 1,
     step,
-    stream: [
-      { type: 'chunk', time: seq, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-      ...(streamTokenUsage === undefined
-        ? []
-        : [{ type: 'chunk' as const, time: seq, chunk: { type: 'usage' as const, usage: streamTokenUsage } }]),
-    ],
     message: {
       id: `message-${seq}`,
       role: 'assistant',
@@ -47,11 +40,11 @@ function message(
   })
 }
 
-function attempt(seq: number, chunks: readonly StreamChunk[], step = 1): SessionEvent {
+function attempt(seq: number, tokenUsage?: TokenUsage, step = 1): SessionEvent {
   return event(seq, 'assistant/attempt', {
     turn: 1,
     step,
-    stream: chunks.map((chunk, index) => ({ type: 'chunk', time: seq + index, chunk })),
+    ...tokenUsage === undefined ? {} : { usage: tokenUsage },
   })
 }
 
@@ -96,33 +89,23 @@ describe('deriveTurnTokenUsage', () => {
     }))))).toBeUndefined()
   })
 
-  it('lets final message usage replace the latest streaming sample', () => {
+  it('uses the committed message usage as the attempt sample', () => {
     const result = deriveTurnTokenUsage(completeAttempt(
       message(
         4,
         usage({ inputTokens: 30, outputTokens: 5, totalTokens: 45, cacheReadTokens: 10 }),
-        'deepseek',
-        'deepseek-chat',
-        1,
-        usage(),
       ),
     ))
     expect(result).toMatchObject({ uncachedInputTokens: 30, outputTokens: 5, totalTokens: 45 })
   })
 
-  it('keeps the latest streaming sample when the final message omits usage', () => {
-    const result = deriveTurnTokenUsage(completeAttempt(
-      message(4, undefined, 'deepseek', 'deepseek-chat', 1, usage()),
-    ))
-    expect(result).toMatchObject({ uncachedInputTokens: 100, outputTokens: 20, totalTokens: 170 })
+  it('fails closed when the committed message omits usage', () => {
+    expect(deriveTurnTokenUsage(completeAttempt(message(4)))).toBeUndefined()
   })
 
   it('counts an error-finished attempt once across its retry boundary', () => {
     const events = completeAttempt(
-      attempt(3, [
-        { type: 'usage', usage: usage() },
-        { type: 'finish', reason: { kind: 'error', failure: { code: 'HTTP', message: 'failed' } } },
-      ]),
+      attempt(3, usage()),
       event(5, 'llm/retry', { turn: 1, step: 1 }),
       event(6, 'llm/retry-started', { turn: 1, step: 1, retry: 1 }),
       message(7, usage({ inputTokens: 40, outputTokens: 10, totalTokens: 70, cacheReadTokens: 20 })),
@@ -137,10 +120,7 @@ describe('deriveTurnTokenUsage', () => {
 
   it('does not invent an attempt for a scheduled retry that never started', () => {
     const result = deriveTurnTokenUsage(completeAttempt(
-      attempt(3, [
-        { type: 'usage', usage: usage() },
-        { type: 'finish', reason: { kind: 'error', failure: { code: 'HTTP', message: 'failed' } } },
-      ]),
+      attempt(3, usage()),
       event(4, 'llm/retry', { turn: 1, step: 1 }),
     ))
     expect(result).toMatchObject({ totalTokens: 170 })
@@ -279,20 +259,14 @@ describe('deriveTurnTokenUsage', () => {
 
   it('closes a sampled attempt at step/end', () => {
     expect(deriveTurnTokenUsage(completeAttempt(
-      attempt(3, [
-        { type: 'usage', usage: usage() },
-        { type: 'finish', reason: { kind: 'stop' } },
-      ]),
+      attempt(3, usage()),
       event(5, 'tool/call', { turn: 1, step: 1 }),
     ))).toMatchObject({ totalTokens: 170 })
   })
 
   it('accepts an aborted finish after observing usage', () => {
     expect(deriveTurnTokenUsage(completeAttempt(
-      attempt(3, [
-        { type: 'usage', usage: usage() },
-        { type: 'finish', reason: { kind: 'aborted', failure: { message: 'aborted', code: 'ABORTED' } } },
-      ]),
+      attempt(3, usage()),
     ))).toMatchObject({ totalTokens: 170 })
   })
 
@@ -346,28 +320,23 @@ describe('deriveTurnTokenUsage', () => {
     ['retry start for the wrong step', [
       event(1, 'turn/start', { turn: 1 }),
       event(2, 'step/start', { turn: 1, step: 1 }),
-      attempt(3, [
-        { type: 'usage', usage: usage() },
-        { type: 'finish', reason: { kind: 'error', failure: { code: 'HTTP', message: 'failed' } } },
-      ]),
+      attempt(3, usage()),
       event(4, 'llm/retry', { turn: 1, step: 1 }),
       event(5, 'llm/retry-started', { turn: 1, step: 2, retry: 1 }),
     ]],
     ['attempt outside a step', [
       event(1, 'turn/start', { turn: 1 }),
-      attempt(2, [{ type: 'usage', usage: usage() }]),
+      attempt(2, usage()),
     ]],
     ['attempt for the wrong step', [
       event(1, 'turn/start', { turn: 1 }),
       event(2, 'step/start', { turn: 1, step: 1 }),
-      attempt(3, [{ type: 'usage', usage: usage() }], 2),
+      attempt(3, usage(), 2),
     ]],
     ['error finish without usage', [
       event(1, 'turn/start', { turn: 1 }),
       event(2, 'step/start', { turn: 1, step: 1 }),
-      attempt(3, [{
-        type: 'finish', reason: { kind: 'error', failure: { code: 'HTTP', message: 'failed' } },
-      }]),
+      attempt(3),
     ]],
     ['retry outside an attempt', [
       event(1, 'turn/start', { turn: 1 }),
@@ -376,10 +345,7 @@ describe('deriveTurnTokenUsage', () => {
     ['retry for the wrong step', [
       event(1, 'turn/start', { turn: 1 }),
       event(2, 'step/start', { turn: 1, step: 1 }),
-      attempt(3, [
-        { type: 'usage', usage: usage() },
-        { type: 'finish', reason: { kind: 'error', failure: { code: 'HTTP', message: 'failed' } } },
-      ]),
+      attempt(3, usage()),
       event(4, 'llm/retry', { turn: 1, step: 2 }),
     ]],
     ['retry after a final message', [

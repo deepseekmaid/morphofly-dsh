@@ -397,7 +397,9 @@ export function normalizeSessionLog(
     }
     if ((record.type === 'assistant/message' || record.type === 'assistant/attempt')
       && record.data !== null && typeof record.data === 'object') {
-      const stream = (record.data as { stream?: unknown }).stream
+      const data = record.data as { firstTokenTime?: unknown; stream?: unknown }
+      if (typeof data.firstTokenTime === 'number') data.firstTokenTime = 0
+      const stream = data.stream
       if (Array.isArray(stream)) {
         for (const member of stream) {
           if (member === null || typeof member !== 'object') continue

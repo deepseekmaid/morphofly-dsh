@@ -216,7 +216,6 @@ describe('contextBreakdown session projection', () => {
     appendUser(session, 'abcd')
     session.append('step/start', { turn: 1, step: 1 })
     session.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({
@@ -267,7 +266,6 @@ describe('contextBreakdown session projection', () => {
     const question = appendUser(session, 'a first question, long enough to price above zero')
     session.append('step/start', { turn: 1, step: 1 })
     const answer = session.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({

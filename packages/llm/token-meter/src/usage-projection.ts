@@ -3,7 +3,7 @@
  */
 
 import { z } from 'zod'
-import { lastAssistantStreamChunk, type TokenUsage } from '@deepseek-ai/dsh-llm'
+import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-llm-retry/types'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -80,9 +80,8 @@ const pressureFrom = (usage: TokenUsage): number =>
 
 /** The usage one durable Assistant settlement reports for its attempt, if any. */
 function usageOf(event: SessionEvent): TokenUsage | undefined {
-  if (event.type === 'assistant/message' && event.data.usage !== undefined) return event.data.usage
   if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') return undefined
-  return lastAssistantStreamChunk(event.data.stream, 'usage')?.usage
+  return event.data.usage
 }
 
 /** The context-pressure state schema and source of its inferred type. */
@@ -104,9 +103,9 @@ export type ContextPressureState = z.infer<typeof contextPressureStateSchema>
 /**
  * Token-meter's session projection unit.
  *
- * Each v2 Assistant settlement contributes the last usage sample embedded in
- * its stream. `llm/retry-started` closes the replacement slot so the retried
- * attempt adds to the total.
+ * Each Assistant settlement contributes the usage sample it reports.
+ * `llm/retry-started` closes the replacement slot so the retried attempt adds
+ * to the total.
  */
 export const tokenUsageProjectionDefinition = {
   key: 'tokenUsage',

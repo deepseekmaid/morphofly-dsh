@@ -65,7 +65,6 @@ async function seedInterruptedSession(root: string, cwd: string): Promise<string
       data: {
         turn: 1,
         step: 1,
-        stream: [],
         message: createMessage({
           role: 'assistant',
           content: [{ type: 'tool-call', id: ToolCallId('unknown-outcome-call'), name: 'write_remote', arguments: '{"value":1}' }],

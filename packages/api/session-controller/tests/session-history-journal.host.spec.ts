@@ -36,7 +36,6 @@ function appendAssistantText(session: Session, text: string, step: number, turn 
       content: [{ type: 'text', text }],
       source: { kind: 'model', provider: 'p', model: 'm' },
     }),
-    stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: [text] }],
   }, { surfaceOp: 'append' })
 }
 
@@ -879,7 +878,7 @@ describe('Session history raw journal', () => {
     expect(page.map(event => event.seq)).toEqual(page.map((_event, index) => third.seq + index))
   })
 
-  it('paginates a message with a large embedded stream without expanding physical records', async () => {
+  it('paginates a settlement message without expanding it into chunk records', async () => {
     const { ctx } = await harness()
     const remote = await createSessionTestRemote(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
     const session = ctx.sessions.create(undefined, { meta: { cwd: '/workspace' } })
@@ -889,12 +888,12 @@ describe('Session history raw journal', () => {
     const message = session.append('assistant/message', {
       turn: 1,
       step: 1,
+      firstTokenTime: 1_700_000_000_000,
       message: createMessage({
         role: 'assistant',
         content: [{ type: 'text', text: 'x'.repeat(texts.length) }],
         source: { kind: 'model', provider: 'p', model: 'm' },
       }),
-      stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: texts.slice(1).map(() => 0), texts }],
     }, { surfaceOp: 'append' })
 
     const scalarMin = Math.min
@@ -938,18 +937,15 @@ describe('Session history raw journal', () => {
     await ctx.fiber.dispose()
   })
 
-  it('keeps compact reasoning and tool-call runs nested in one attempt event', async () => {
+  it('keeps one settlement attempt event with its scalar payload', async () => {
     const { ctx } = await harness()
     const remote = await createSessionTestRemote(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
     const session = ctx.sessions.create(undefined, { meta: { cwd: '/workspace' } })
-    const callId = ToolCallId('packed-call')
     const attempt = session.append('assistant/attempt', {
       turn: 1,
       step: 1,
-      stream: [
-        { type: 'reasoning-chunks', time0: 1, index: 0, dt: [1, 1], texts: ['r0', 'r1', 'r2'] },
-        { type: 'tool-call-chunks', time0: 4, index: 1, id: callId, dt: [1, 1], args: ['a0', 'a1', 'a2'] },
-      ],
+      firstTokenTime: 1,
+      usage: { inputTokens: 3, outputTokens: 2 },
     })
 
     const response = await remote.page({

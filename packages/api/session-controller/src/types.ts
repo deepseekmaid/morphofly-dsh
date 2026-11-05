@@ -449,7 +449,13 @@ export type SessionWireSurfaceOp =
   | 'append'
   | { readonly op: 'replace'; readonly startSeq: number; readonly endSeq: number }
 
-/** One history-page record with compact Assistant streams embedded inside events. */
+/**
+ * One history-page record carrying one Session event.
+ *
+ * Session format V5 settlement events carry only scalar settlement facts; the exact
+ * timed Assistant stream lives in the Session-local `streams.v1` sidecar and is read
+ * on demand rather than transported inside the event.
+ */
 export type SessionHistoryRecord = SessionEventEntry
 
 /**

@@ -24,7 +24,7 @@ it('preserves tool identity for both calls and results', () => {
 
 it('describes Assistant children by their owning event and reasoning or response part', () => {
   const event: SessionEvent<'assistant/attempt'> = { type: 'assistant/attempt', seq: SessionSeq(15), time: 0,
-    data: { turn: 1, step: 1, stream: [] } }
+    data: { turn: 1, step: 1 } }
   expect(sessionLogChatTarget({ event, chunk: { type: 'reasoning-delta', index: 0, text: 'thinking' } }))
     .toEqual({ anchorSeq: 15, nodeKind: 'assistant-step', turn: 1, step: 1, groupPart: 'reasoning' })
   expect(sessionLogChatTarget({ event, chunk: { type: 'block-start', index: 0, blockType: 'text' } }).groupPart).toBe('response')

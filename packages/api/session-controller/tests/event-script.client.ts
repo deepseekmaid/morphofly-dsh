@@ -43,15 +43,7 @@ export const ev = {
   assistant: (seq: SessionSeq, turn: number, body: string, step = 0): SessionEvent =>
     at(seq, { type: 'assistant/message', surfaceOp: 'append', data: {
       turn, step,
-      stream: [
-        { type: 'chunk', time: 1_700_000_000_000 + seq, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-        { type: 'text-chunks', time0: 1_700_000_000_000 + seq, index: 0, dt: [], texts: [body] },
-        {
-          type: 'chunk', time: 1_700_000_000_000 + seq,
-          chunk: { type: 'block-end', index: 0, block: { type: 'text', text: body } },
-        },
-        { type: 'chunk', time: 1_700_000_000_000 + seq, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-      ],
+      firstTokenTime: 1_700_000_000_000 + seq,
       message: createMessage({
         role: 'assistant',
         content: text(body),

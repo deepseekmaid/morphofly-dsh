@@ -51,7 +51,7 @@ function assistantSettlement(seq: SessionSeq): SessionAssistantSettlementEntry {
       type: 'assistant/attempt',
       seq,
       time: seq,
-      data: { turn: 1, step: 1, stream: [] },
+      data: { turn: 1, step: 1 },
     },
   }
 }

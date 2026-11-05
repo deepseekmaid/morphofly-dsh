@@ -5,7 +5,6 @@ import type {
   RequestView,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
-import { assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm/assistant-stream'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import { trajectoryNode } from './trajectory-definition-common.ts'
 import type { TrajectoryPartialAssistant } from './trajectory-contract.ts'
@@ -197,7 +196,7 @@ function settleTiming(
 ): AssistantState {
   return {
     ...state,
-    firstTokenTime: state.firstTokenTime ?? assistantStreamFirstTokenTime(event.data.stream),
+    firstTokenTime: state.firstTokenTime ?? event.data.firstTokenTime,
   }
 }
 

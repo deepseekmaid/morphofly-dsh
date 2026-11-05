@@ -3,7 +3,6 @@
 import type { SessionEventLike } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { AssistantMessage, ContentBlock, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
-import { assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm/assistant-stream'
 // Type-only: the PTC event members this fold reads.
 import type {} from '@deepseek-ai/dsh-tool-executor-ptc/types'
 import type {
@@ -430,9 +429,8 @@ export function foldEvent(
     case 'assistant/attempt':
     case 'assistant/message': {
       let next = state ?? newState(event.data.turn, event.data.step)
-      if (next.firstTokenTime === null) {
-        const fromStream = assistantStreamFirstTokenTime(event.data.stream)
-        if (isNumber(fromStream)) next = { ...next, firstTokenTime: fromStream }
+      if (next.firstTokenTime === null && isNumber(event.data.firstTokenTime)) {
+        next = { ...next, firstTokenTime: event.data.firstTokenTime }
       }
       if (event.type === 'assistant/attempt') return next
       const answer = answerOf(event.data.message)

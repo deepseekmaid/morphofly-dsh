@@ -13,7 +13,6 @@ import {
   MessageId,
   ToolCallId,
   type AssistantMessage,
-  type AssistantStreamRecord,
   type ContentBlock,
   type ImageBlock,
   type StreamChunk,
@@ -200,13 +199,6 @@ function ptcDispatch(
     isError,
     content,
   }, time)
-}
-
-function streamAt(firstTokenAt: number): AssistantStreamRecord[] {
-  return [
-    { type: 'chunk', time: firstTokenAt - 100, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-    { type: 'chunk', time: firstTokenAt, chunk: { type: 'text-delta', index: 0, text: 'x' } },
-  ]
 }
 
 /** Fold a whole event list, asserting that it produced a state. */
@@ -623,18 +615,18 @@ describe('assistant timeline and usage', () => {
     expect(state.startTime).toBeNull()
   })
 
-  it('derives the first token from a durable attempt stream', () => {
+  it('reads the first token scalar from a durable attempt settlement', () => {
     const attempt = defined(foldEvent(undefined, event('assistant/attempt', {
-      turn: 2, step: 1, stream: streamAt(1_300),
+      turn: 2, step: 1, firstTokenTime: 1_300,
     }, 1_500)))
     expect(attempt.firstTokenTime).toBe(1_300)
     expect(attempt.messageTime).toBeNull()
     const empty = defined(foldEvent(undefined, event('assistant/attempt', {
-      turn: 2, step: 1, stream: [],
+      turn: 2, step: 1,
     }, 1_500)))
     expect(empty.firstTokenTime).toBeNull()
     const kept = defined(foldEvent(attempt, event('assistant/attempt', {
-      turn: 2, step: 1, stream: streamAt(1_400),
+      turn: 2, step: 1, firstTokenTime: 1_400,
     }, 1_600)))
     expect(kept.firstTokenTime).toBe(1_300)
   })
@@ -644,7 +636,7 @@ describe('assistant timeline and usage', () => {
       turn: 2,
       step: 1,
       message: assistantMessage([textBlock('done')]),
-      stream: streamAt(1_300),
+      firstTokenTime: 1_300,
       usage,
       interrupted: true,
     }, 1_500)))
@@ -656,7 +648,6 @@ describe('assistant timeline and usage', () => {
       turn: 2,
       step: 1,
       message: assistantMessage([textBlock('again')]),
-      stream: [],
     }, 1_900)))
     expect(repeated.messageTime).toBe(1_500)
     expect(repeated.usage).toEqual(usage)
@@ -665,7 +656,6 @@ describe('assistant timeline and usage', () => {
       turn: 2,
       step: 1,
       message: assistantMessage(),
-      stream: [],
       usage: { inputTokens: 5, outputTokens: 6 },
     }, 2_100)))
     expect(refreshed.usage).toEqual({ inputTokens: 5, outputTokens: 6 })
@@ -673,19 +663,19 @@ describe('assistant timeline and usage', () => {
 
   it('keeps a trimmed answer preview and caps long text', () => {
     const first = defined(foldEvent(undefined, event('assistant/message', {
-      turn: 2, step: 1, message: assistantMessage([textBlock('first line\nsecond line')]), stream: [],
+      turn: 2, step: 1, message: assistantMessage([textBlock('first line\nsecond line')]),
     }, 1_500)))
     expect(first.answer).toBe('first line\nsecond line')
     expect(first.answerBody).toBe('first line\nsecond line')
     expect(first.answerTruncated).toBe(false)
     // Non-text blocks do not contribute, and a text-only whitespace message contributes nothing.
     const mixed = defined(foldEvent(first, event('assistant/message', {
-      turn: 2, step: 1, message: assistantMessage([imageBlock(), textBlock('   ')]), stream: [],
+      turn: 2, step: 1, message: assistantMessage([imageBlock(), textBlock('   ')]),
     }, 1_600)))
     expect(mixed.answer).toBe('first line\nsecond line')
     const long = 'x'.repeat(20_001)
     const capped = defined(foldEvent(undefined, event('assistant/message', {
-      turn: 3, step: 1, message: assistantMessage([textBlock(long)]), stream: [],
+      turn: 3, step: 1, message: assistantMessage([textBlock(long)]),
     }, 1_700)))
     expect(capped.answer).toHaveLength(400)
     expect(capped.answerBody).toHaveLength(16_000)
@@ -694,7 +684,7 @@ describe('assistant timeline and usage', () => {
 
   it('leaves usage unset when the first message reports none', () => {
     const state = defined(foldEvent(undefined, event('assistant/message', {
-      turn: 2, step: 1, message: assistantMessage(), stream: [],
+      turn: 2, step: 1, message: assistantMessage(),
     }, 1_500)))
     expect(state.usage).toBeNull()
     expect(state.firstTokenTime).toBeNull()
