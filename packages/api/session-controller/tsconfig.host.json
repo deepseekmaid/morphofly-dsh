@@ -7,6 +7,7 @@
   },
   "files": [
     "src/index.ts",
+    "src/idle-release.ts",
     "src/types.ts",
     "src/remote-events.ts",
     "src/agent.ts",
@@ -130,6 +131,9 @@
     },
     {
       "path": "../../util/brand"
+    },
+    {
+      "path": "../../terminal/terminal"
     }
   ]
 }

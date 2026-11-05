@@ -107,6 +107,10 @@ export interface TestSessionRemoteDefaults {
   readonly revealPath?: (path: string, signal: AbortSignal) => Promise<void>
   readonly canOpenPath?: () => boolean
   readonly listWorkSliceMs?: number
+  /** Idle-release grace in milliseconds for the composed Session Controller. */
+  readonly idleReleaseGraceMs?: number
+  /** Idle-release scan interval in milliseconds for the composed Session Controller. */
+  readonly idleReleaseSweepMs?: number
 }
 
 const installed = new WeakMap<Context, SessionController>()
@@ -309,6 +313,8 @@ async function installControllers(
       {
         ...defaults.nativeOpen === undefined ? {} : { nativeOpen: defaults.nativeOpen },
         ...defaults.listWorkSliceMs === undefined ? {} : { listWorkSliceMs: defaults.listWorkSliceMs },
+        ...defaults.idleReleaseGraceMs === undefined ? {} : { idleReleaseGraceMs: defaults.idleReleaseGraceMs },
+        ...defaults.idleReleaseSweepMs === undefined ? {} : { idleReleaseSweepMs: defaults.idleReleaseSweepMs },
       },
       {
         ...defaults.openPath === undefined ? {} : { openPath: defaults.openPath },

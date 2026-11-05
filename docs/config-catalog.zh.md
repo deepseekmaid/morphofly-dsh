@@ -273,6 +273,13 @@ export interface Config {
   readonly nativeOpen?: boolean
   /** Positive integral milliseconds of list work before yielding between complete rows. */
   readonly listWorkSliceMs?: number
+  /**
+   * Non-negative integral milliseconds an activated Agent may stay idle before
+   * the Web host releases it; `0` keeps every activated Agent resident.
+   */
+  readonly idleReleaseGraceMs?: number
+  /** Positive integral milliseconds between idle release scans; ignored when release is disabled. */
+  readonly idleReleaseSweepMs?: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-api-session-controller -->
