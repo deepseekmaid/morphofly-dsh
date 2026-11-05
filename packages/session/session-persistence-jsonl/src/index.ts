@@ -34,8 +34,9 @@ import {
 } from '@deepseek-ai/dsh-session-persistence'
 import { JsonlBackendTracker, JsonlSessionHandle, type AssistantStreamCarry, type StorageHandleState } from './storage.ts'
 import { SessionWriteLease } from './lease.ts'
-import { SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionHeader, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
 import {
   assertNoRetiredHeaderFields, encodeSegment, eventLines, generationLogFilename, generationLogPath, logPath, logSuffix,
   parseGenerationLogFilename, projectDir, scanLog, sessionDir, SessionLogScanner, toHeaderLine,
@@ -45,13 +46,15 @@ import {
   compressZstdFrame, createZstdFrameDecoder, decompressZstdFrame, decompressZstdPrefix, scanZstdFrames,
 } from './zstd.ts'
 import { ensureDurableDirectoryWin32, publishNewFileWin32 } from './win32.ts'
-import { writeAssistantStream } from './streams.ts'
+import { readAssistantStream as readStoredAssistantStream, writeAssistantStream } from './streams.ts'
 import { verifyCurrentGenerationInWorker } from './migration-verifier.ts'
 import { prepareCatalogFacts } from './catalog-migration.ts'
 import {
+  captureEmbeddedAssistantStream,
   JsonlGenerationSourceChangedError,
   JsonlGenerationUnsupportedMigrationError,
   prepareJsonlMigration,
+  readEmbeddedAssistantStream as readEmbeddedAssistantStreamRow,
   readStableJsonlFile,
   type JsonlGenerationFormatAdapter,
   type JsonlPhysicalIdentity,
@@ -146,6 +149,8 @@ interface CurrentStoredLog extends StoredLogBase {
 interface PreparedStoredLog extends StoredLogBase {
   readonly status: 'prepared'
   readonly validateRelatedSources: () => Promise<void>
+  /** Embedded settlement streams captured from the historical source, keyed by sequence. */
+  readonly assistantStreams: AssistantStreamCarry
   readonly publication: {
     readonly source: ResolvedJsonlGeneration
     readonly value: PreparedJsonlMigration
@@ -413,6 +418,7 @@ class JsonlSessionPersistence extends SessionPersistence {
           materialized: true,
           inheritedEventCount: stored.inheritedEventCount,
           primed: stored,
+          assistantStreamSource: stored.publication.source.sourcePath,
         }
       } else {
         state = {
@@ -686,6 +692,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     selected: ResolvedJsonlGeneration,
     signal: AbortSignal,
   ): Promise<PreparedStoredLog> {
+    const assistantStreams = new Map<SessionSeq, readonly AssistantStreamRecord[]>()
     let prepared: Awaited<ReturnType<typeof prepareJsonlMigration>>
     let validateRelatedSources: () => Promise<void>
     try {
@@ -724,6 +731,7 @@ class JsonlSessionPersistence extends SessionPersistence {
           id,
           signal,
         ),
+        captureSourceEvent: (event) => { captureEmbeddedAssistantStream(event, assistantStreams) },
         signal,
       })
     } catch (error: unknown) {
@@ -736,6 +744,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     const stored: PreparedStoredLog = {
       status: 'prepared',
       validateRelatedSources,
+      assistantStreams,
       meta,
       ...freezeStoredEvents(events),
       tornTruncateTo: undefined,
@@ -753,6 +762,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     const migration = stored.publication
     let identity: JsonlPhysicalIdentity
     try {
+      await this.writeMigratedAssistantStreams(stored)
       identity = await migration.value.publish()
     } catch (error: unknown) {
       /* v8 ignore else -- a newer preparation may have replaced this stale cache entry. */
@@ -771,6 +781,20 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
     this.memoizeStoredLog(id, published)
     return published
+  }
+
+  /**
+   * Publish the sidecars captured from a historical generation before its V5
+   * successor becomes visible. A partial failure leaves only reusable sidecars;
+   * the source generation is untouched and a retry reuses identical bytes.
+   */
+  private async writeMigratedAssistantStreams(stored: PreparedStoredLog): Promise<void> {
+    if (stored.assistantStreams.size === 0) return
+    const directory = dirname(stored.publication.source.sourcePath)
+    const entries = [...stored.assistantStreams.entries()].sort(([left], [right]) => left - right)
+    for (const [seq, stream] of entries) {
+      await writeAssistantStream(directory, seq, stream, this.compression)
+    }
   }
 
   /** Translate generation-layer failures into the persistence seam's error vocabulary. */
@@ -874,6 +898,47 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
     this.memoizeStoredLog(expectedId, stored)
     return stored
+  }
+
+  /**
+   * Read the sidecar Assistant stream stored beside the current generation.
+   * @param header - the session whose sidecars are addressed.
+   * @param seq - sequence of the settlement event.
+   * @param signal - optional cancellation.
+   * @returns the stored records, or `undefined` when no sidecar is published.
+   */
+  async readAssistantStream(
+    header: SessionHeader,
+    seq: SessionSeq,
+    signal?: AbortSignal,
+  ): Promise<readonly AssistantStreamRecord[] | undefined> {
+    signal?.throwIfAborted()
+    return readStoredAssistantStream(sessionDir(this.root, header.cwd, header.id), seq, this.compression)
+  }
+
+  /**
+   * Read one historical generation row's embedded Assistant stream.
+   * @param path - immutable historical generation file.
+   * @param seq - sequence of the settlement event.
+   * @param signal - optional cancellation.
+   * @returns the embedded records, or `undefined` when the row keeps none.
+   */
+  async readEmbeddedAssistantStream(
+    path: string,
+    seq: SessionSeq,
+    signal?: AbortSignal,
+  ): Promise<readonly AssistantStreamRecord[] | undefined> {
+    try {
+      return await readEmbeddedAssistantStreamRow(path, this.compression, seq, signal)
+    } catch (error: unknown) {
+      if (isErrnoException(error)) throw error
+      /* v8 ignore next -- cancellation during a fallback read is timing-dependent; the caller owns the signal. */
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      throw new SessionPersistenceCorruptionError(
+        `historical generation keeps an unreadable assistant stream (raw log: ${path})`,
+        { cause: error },
+      )
+    }
   }
 
   /** Insert one parsed log into the bounded handoff cache. */

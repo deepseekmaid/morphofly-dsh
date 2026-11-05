@@ -12,7 +12,8 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { generationLogPath, type JsonlCompression } from '../src/format.ts'
+import { generationLogPath, sessionDir, type JsonlCompression } from '../src/format.ts'
+import { assistantStreamDirectory } from '../src/streams.ts'
 import { compressZstdFrame } from '../src/zstd.ts'
 
 const id = SessionId('migration-refusal')
@@ -248,6 +249,11 @@ async function expectOnlyGenerations(paths: readonly string[]) {
     .toEqual(paths.map(path => basename(path)).sort())
 }
 
+/** The sidecar directory a published V5 successor carries beside its source. */
+function successorStreamDirectory(): string {
+  return assistantStreamDirectory(sessionDir(root, undefined, id))
+}
+
 describe.each(modes)('EOF migration refusal ($compression, $access)', ({ compression, access }) => {
   async function expectV3Conversion(
     rows: readonly SessionFormatJsonObject[], inspect: (events: readonly SessionEvent[]) => void,
@@ -268,7 +274,9 @@ describe.each(modes)('EOF migration refusal ($compression, $access)', ({ compres
       }
     }
     expect(await observe(path)).toEqual(original)
-    await expectOnlyGenerations(access === 'read' ? [path] : [path, generationLogPath(root, undefined, id, SESSION_FORMAT_VERSION, compression)])
+    await expectOnlyGenerations(access === 'read'
+      ? [path]
+      : [path, generationLogPath(root, undefined, id, SESSION_FORMAT_VERSION, compression)])
   }
 
   it.each(migrationRefusals)('refuses V2 $name without publishing or discarding a tail', async ({ tail, diagnostic }) => {
@@ -459,7 +467,9 @@ describe.each(modes)('EOF migration refusal ($compression, $access)', ({ compres
       }
     }
     expect(await observe(path)).toEqual(original)
-    await expectOnlyGenerations(access === 'read' ? [path] : [path, generationLogPath(root, undefined, id, SESSION_FORMAT_VERSION, compression)])
+    await expectOnlyGenerations(access === 'read'
+      ? [path]
+      : [path, generationLogPath(root, undefined, id, SESSION_FORMAT_VERSION, compression), successorStreamDirectory()])
   })
 
   it('preserves outer V3 tool-message metadata through migration and native reopening', async () => {
@@ -487,7 +497,9 @@ describe.each(modes)('EOF migration refusal ($compression, $access)', ({ compres
       }
     }
     expect(await observe(path)).toEqual(original)
-    await expectOnlyGenerations(access === 'read' ? [path] : [path, generationLogPath(root, undefined, id, SESSION_FORMAT_VERSION, compression)])
+    await expectOnlyGenerations(access === 'read'
+      ? [path]
+      : [path, generationLogPath(root, undefined, id, SESSION_FORMAT_VERSION, compression), successorStreamDirectory()])
   })
 
   it.each(nativeRefusals.flatMap(refusal => ([3, SESSION_FORMAT_VERSION] as const).map(version => ({ ...refusal, version }))))(

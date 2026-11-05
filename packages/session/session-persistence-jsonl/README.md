@@ -63,14 +63,20 @@ Each session gets a session-owned directory under a readable project directory. 
       session.jsonl.zstd         # released v0, compressed root
       session.v1.jsonl.zstd      # released v1, compressed root
       session.v2.jsonl.zstd      # released v2, compressed root
-      session.v3.jsonl.zstd      # released v3/current, compressed root
+      session.v3.jsonl.zstd      # released v3, compressed root
       session.jsonl              # released v0, raw root
       session.v1.jsonl           # released v1, raw root
       session.v2.jsonl           # released v2, raw root
-      session.v3.jsonl           # released v3/current, raw root; later versions use vN
+      session.v3.jsonl           # released v3, raw root; later versions use vN
+      streams.v1/                # Assistant streams for V5 settlements
+        s<seq>.jsonl.zstd        # one {"seq":N,"stream":[...]} line per settlement; suffix follows compression
 ```
 
 Session ids are injectively escaped to one safe path segment before use (no traversal, no collision). The normalized cwd keeps the project directory readable for navigation; cwd strings that normalize alike share a project directory while session ids still select distinct session directories. Runtime operations select the numerically highest canonical generation, and format-refusal diagnostics name that absolute path so an operator can find the raw log a build refused to interpret.
+
+### Assistant streams beside the log
+
+Format V5 moves a settlement's compact Assistant stream out of the event. For every `assistant/message` or `assistant/attempt` event, persistence stores the exact records in `<sessionDir>/streams.v1/s<seq>.jsonl[.zstd]`, named by the settlement sequence, as one JSON line `{"seq":N,"stream":[...]}` with the log's trailing newline; the encoding follows the configured compression. A batch publishes its sidecars (temporary file, `fsync`, atomic publish) before any of the batch's log lines, so a log line never precedes its stream. A retried write reuses a byte-identical existing sidecar and rejects different content with a conflict; a sidecar that cannot be decoded or validated is reported as corrupt. Read a settlement's stream through the optional `SessionHandle.readAssistantStream(seq)` capability: `undefined` means the sequence is not an Assistant settlement or does not exist, and a settlement whose stored stream is missing or unreadable rejects with `SessionAssistantStreamUnavailableError`. A handle opened over a historical V4 generation falls back to the stream embedded in that generation, so migration keeps its timed stream readable. The sidecar directory is Session data: any exporter, fork path, or backup must copy `streams.v1/` with the log.
 
 ### Durability and crash semantics
 
@@ -169,6 +175,7 @@ These limits define when this backend is a poor fit or needs special operational
 - **Concurrent root disposal is not ordered** — Cordis can remove already-disposing consumers from its registry before the provider can join their cleanup. Dependency ordering here covers consumer unloads triggered by removing this provider.
 - **POSIX materialization requires hard-link support** — first append uses `link()` so same-id races fail instead of overwriting a committed log; Windows uses write-through rename without replacement.
 - **POSIX writes require the matching prebuilt system addon** — [`node-addon-system`](../../../native/system/README.md) supplies asynchronous flock without consumer-side compilation. A missing addon rejects write ownership; Windows retains its semaphore implementation.
+- **Fork does not copy sidecars yet** — a forked Session inherits the seeded prefix events but not their `streams.v1/` files, so `readAssistantStream` reports `SessionAssistantStreamUnavailableError` for inherited settlements until that copy lands. The export path already packages sidecar entries beside each exported log.
 
 <a id="dev-note"></a>
 ### Dev Note

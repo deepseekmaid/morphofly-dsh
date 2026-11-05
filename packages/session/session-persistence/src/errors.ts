@@ -7,7 +7,7 @@
  */
 
 import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 
 /** The requested Session identity has no durable log visible to this caller. */
 export class SessionPersistenceNotFoundError extends Error {
@@ -61,6 +61,23 @@ export class SessionOwnershipLostError extends Error {
   constructor(readonly sessionId: SessionId) {
     super(`session "${sessionId}": write ownership was lost; close this handle and reopen`)
     this.name = 'SessionOwnershipLostError'
+  }
+}
+
+/**
+ * A settlement event is stored, but its sidecar Assistant stream is missing or
+ * unreadable. Distinct from a sequence that is not a settlement, which reads as
+ * `undefined`.
+ */
+export class SessionAssistantStreamUnavailableError extends Error {
+  /**
+   * @param sessionId - the stored session that owns the settlement.
+   * @param seq - sequence of the settlement event whose stream is unavailable.
+   * @param options - original read or decode failure, when one exists.
+   */
+  constructor(readonly sessionId: SessionId, readonly seq: SessionSeq, options?: ErrorOptions) {
+    super(`session "${sessionId}": assistant stream for event ${seq} is unavailable`, options)
+    this.name = 'SessionAssistantStreamUnavailableError'
   }
 }
 

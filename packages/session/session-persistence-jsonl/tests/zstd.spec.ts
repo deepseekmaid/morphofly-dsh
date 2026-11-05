@@ -480,9 +480,11 @@ describe('JsonlSessionPersistence: default Zstandard encoding', () => {
       .map(line => (JSON.parse(line) as { type: string }).type)
     expect(recordTypes).not.toContain('text-chunks')
     const assistant = plaintext.trimEnd().split('\n')
-      .map(line => JSON.parse(line) as { type: string; data?: { stream?: Array<{ type: string }> } })
+      .map(line => JSON.parse(line) as { type: string; data?: { firstTokenTime?: number; stream?: unknown } })
       .find(record => record.type === 'assistant/message')
-    expect(assistant?.data?.stream?.some(record => record.type === 'text-chunks')).toBe(true)
+    // V5 settlements keep scalar timing in the log; the compact stream lives in the sidecar.
+    expect(assistant?.data?.firstTokenTime).toBe(3)
+    expect(Object.hasOwn(assistant?.data ?? {}, 'stream')).toBe(false)
     expect((await readAll(backend, header.id)).events).toEqual(events)
   })
 

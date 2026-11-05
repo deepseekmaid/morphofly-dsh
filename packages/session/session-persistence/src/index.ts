@@ -16,6 +16,7 @@ import type { SessionPersistenceRevision } from './revision.ts'
 export type { SessionHeader } from '@deepseek-ai/dsh-session'
 export { SessionPersistenceRevision } from './revision.ts'
 export type {
+  AssistantStreamRecords,
   SessionAccess,
   SessionHandle,
   SessionHandleAppendOptions,
@@ -26,6 +27,7 @@ export type {
 export {
   SessionAlreadyExistsError,
   SessionAlreadyOwnedError,
+  SessionAssistantStreamUnavailableError,
   SessionFormatUnsupportedError,
   SessionHandleClosedError,
   SessionOwnershipLostError,

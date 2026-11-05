@@ -48,6 +48,8 @@ await ctx.sessionPersistence.flush()                           // backend-wide d
 
 每一次日志读写都流经返回的 `SessionHandle`；不存在按 id 寻址的 append 或 load 方法。`handle.read(offset?, length?)` 返回 `{ eventState, events }`：外层 slice 属于调用方，`eventState` 则区分由调用方独占的 `detached` 事件图与可能同时位于后端缓存中的 `shared-frozen` 事件图。该状态由生成方确定，即使切片为空也会保留。两种状态都能直接接管而无需复制；需要可变事件的消费方必须先克隆事件。读取绝不包含撕裂尾部，同一句柄上的重复读取绝不会观察到比先前读取更旧的状态，写句柄也能读到自己成功的 append。`handle.append(events)` 追加一个连续批次，其第一个 `seq` 等于已存储 next-seq；完成时的持久化是尽力而为的——批次被接受、有序，并对同一后端实例上的读取可见，只有完成的 `flush` 才承诺它在崩溃后依然存在（交付的 JSONL 后端恰好会立即持久化每个批次）。`handle.flush()` 是持久性屏障，同时把空的已创建会话实体化，使其可被持久列出。`handle.close()` 幂等且不可取消：读句柄释放本地资源；写句柄完成待处理的持久化并释放写所有权。一旦某次 `append` 或 `flush` 完成，其后在同一后端实例上开始的读取——无论经由任何句柄，还是经由 `stat`/`list`——至少能观察到该前缀。
 
+`SessionHandle.readAssistantStream(seq)` 是可选能力：当后端把结算的紧凑 Assistant 流存于事件日志旁时提供。交付的 JSONL 后端为格式 V5 实现该方法：按结算序号读取 `streams.v1/` 旁挂，并回退到历史 V4 generation 内嵌的流，因此迁移后仍可读取带时间流。序号不是 Assistant 结算或不存在时返回 `undefined`；结算已存储的流缺失或不可读时以 `SessionAssistantStreamUnavailableError` 拒绝。不保存逐事件流载荷的后端不提供该方法；调用方必须做能力探测。
+
 ### 所有权与可见性
 
 `create` 与 `open(id, 'write')` 取得进程内单写者所有权：在持有者活跃期间第二次以写模式打开会以 `SessionAlreadyOwnedError` 拒绝，对已占用 id 执行 `create` 会以 `SessionAlreadyExistsError` 拒绝，在 `read` 句柄上执行修改会以 `SessionReadOnlyError` 拒绝——一种句柄类型，运行时拒绝。对已关闭句柄的任何操作会以 `SessionHandleClosedError` 拒绝，`SessionOwnershipLostError` 标记写所有权已永久丢失的写句柄（关闭并重新打开）。已创建的会话自 `create` 完成之刻起即可在本进程内被观察到，而后端可以把物理实体化推迟到第一次 `append` 或 `flush`；其他进程只能看到已实体化的会话，一个在崩溃前从未实体化的会话等于从未存在。

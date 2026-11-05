@@ -89,7 +89,7 @@ function appendCarryingTurn(
     mounted.session.append('step/start', { turn: 1, step })
     settlements.push(mounted.session.appendWithCarry(
       'assistant/attempt',
-      { turn: 1, step, stream: [] },
+      { turn: 1, step },
       { assistantStream: stream },
     ).seq)
     mounted.session.append('step/end', { turn: 1, step })

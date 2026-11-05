@@ -23,11 +23,10 @@ import { basename, dirname, join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { pipeline, Readable } from 'node:stream'
 import { scheduler } from 'node:timers/promises'
-import { isDeepStrictEqual } from 'node:util'
 import { constants, createZstdCompress } from 'node:zlib'
-import { Session } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { BlockAssembler, expandAssistantStream } from '@deepseek-ai/dsh-llm'
+import { Session, SessionSeq } from '@deepseek-ai/dsh-session'
+import { expandAssistantStream } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
 import { SessionFormatError } from '@deepseek-ai/dsh-session-format'
 import type {
   SessionFormatArtifact,
@@ -83,6 +82,12 @@ export interface PrepareJsonlMigrationOptions {
   readonly validateHistoricalHeader?: (
     header: Readonly<Record<string, unknown>>,
   ) => void | Promise<void>
+  /**
+   * Observe every decoded historical source row before the format edge rewrites
+   * it. The backend uses this to preserve payload the successor format moves out
+   * of the log, such as the V5 Assistant stream sidecars.
+   */
+  readonly captureSourceEvent?: (event: unknown) => void
   /** Validate the staged file in an isolated worker before publication. */
   readonly verifyCurrentFile: (
     path: string,
@@ -259,6 +264,138 @@ export async function readStableJsonlFile(
   return defaultGenerationRuntime.readStable(path, signal)
 }
 
+/** Find one newline-terminated plaintext row by physical row index. */
+function plaintextRowAt(bytes: Buffer, rowIndex: number): Buffer | undefined {
+  let start = 0
+  for (let row = 0; ; row += 1) {
+    const end = bytes.indexOf(0x0A, start)
+    if (end === -1) return undefined
+    if (row === rowIndex) return bytes.subarray(start, end)
+    start = end + 1
+  }
+}
+
+/** Find one row inside a concatenated-frame Zstandard log by physical row index. */
+function zstdRowAt(bytes: Buffer, rowIndex: number, signal?: AbortSignal): Buffer | undefined {
+  const { frames } = scanZstdFrames(bytes)
+  if (frames.length === 0) throw new Error('empty or header-less Zstandard session log')
+  const decoder = createZstdFrameDecoder()
+  let row = 0
+  let pending: Buffer[] = []
+  let pendingBytes = 0
+  try {
+    for (const chunk of decoder.decode(bytes, frames)) {
+      signal?.throwIfAborted()
+      let lineStart = 0
+      for (
+        let newline = chunk.indexOf(0x0A);
+        newline !== -1;
+        newline = chunk.indexOf(0x0A, lineStart)
+      ) {
+        const fragment = chunk.subarray(lineStart, newline)
+        let line = fragment
+        if (pending.length > 0) {
+          if (fragment.length > 0) pending.push(fragment)
+          line = Buffer.concat(pending, pendingBytes + fragment.length)
+          pending = []
+          pendingBytes = 0
+        }
+        if (row === rowIndex) return line
+        row += 1
+        lineStart = newline + 1
+      }
+      if (lineStart < chunk.length) {
+        const fragment = Buffer.from(chunk.subarray(lineStart))
+        pending.push(fragment)
+        pendingBytes += fragment.length
+      }
+    }
+    return undefined
+  } finally {
+    decoder.close()
+  }
+}
+
+/** Read one settlement row's embedded stream payload, when that generation kept one. */
+function embeddedStreamOf(row: unknown): readonly AssistantStreamRecord[] | undefined {
+  if (typeof row !== 'object' || row === null || Array.isArray(row)) return undefined
+  const record = row as Record<string, unknown>
+  if (record['type'] !== 'assistant/message' && record['type'] !== 'assistant/attempt') return undefined
+  const data = record['data']
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return undefined
+  const stream = (data as Record<string, unknown>)['stream']
+  if (!Array.isArray(stream)) return undefined
+  return stream as readonly AssistantStreamRecord[]
+}
+
+/**
+ * Record one historical settlement row's embedded stream by its sequence
+ * before the format edge removes it. Non-settlement and malformed rows are
+ * ignored: the format decoder owns their refusal.
+ * @param event - one decoded historical source row.
+ * @param into - carry map the migration tee publishes.
+ */
+export function captureEmbeddedAssistantStream(
+  event: unknown,
+  into: Map<SessionSeq, readonly AssistantStreamRecord[]>,
+): void {
+  if (typeof event !== 'object' || event === null || Array.isArray(event)) return
+  const row = event as Record<string, unknown>
+  const seq = row['seq']
+  if (typeof seq !== 'number' || !Number.isSafeInteger(seq) || seq < 0) return
+  const stream = embeddedStreamOf(event)
+  if (stream === undefined) return
+  into.set(SessionSeq(seq), stream)
+}
+
+/**
+ * Read one historical generation's embedded Assistant stream by sequence
+ * without materializing its log. Physical rows are the header followed by one
+ * event per sequence, so the target row is located by position and only that
+ * row is parsed.
+ * @param path - immutable historical generation file.
+ * @param compression - its physical encoding.
+ * @param seq - sequence of the settlement event.
+ * @param signal - optional cancellation.
+ * @returns the embedded records, or `undefined` when the row is absent or
+ *   carries no embedded stream (pre-V2 generations kept raw chunk events).
+ */
+export async function readEmbeddedAssistantStream(
+  path: string,
+  compression: JsonlCompression,
+  seq: SessionSeq,
+  signal?: AbortSignal,
+): Promise<readonly AssistantStreamRecord[] | undefined> {
+  const snapshot = await readStableJsonlFile(path, signal)
+  signal?.throwIfAborted()
+  // Row zero is the physical header; event sequences map to the rows after it.
+  const rowIndex = seq + 1
+  const rowBytes = compression === 'none'
+    ? plaintextRowAt(snapshot.bytes, rowIndex)
+    : zstdRowAt(snapshot.bytes, rowIndex, signal)
+  if (rowBytes === undefined) return undefined
+  let row: unknown
+  try {
+    row = JSON.parse(rowBytes.toString('utf8'))
+  } catch (error: unknown) {
+    throw new Error(`historical generation row ${seq} is not valid JSON: "${path}"`, { cause: error })
+  }
+  const rowSeq = typeof row === 'object' && row !== null && !Array.isArray(row)
+    ? (row as Record<string, unknown>)['seq']
+    : undefined
+  if (rowSeq !== seq) {
+    throw new Error(`historical generation row ${seq} identifies sequence ${String(rowSeq)}: "${path}"`)
+  }
+  const stream = embeddedStreamOf(row)
+  if (stream === undefined) return undefined
+  try {
+    expandAssistantStream(stream)
+  } catch (error: unknown) {
+    throw new Error(`historical generation row ${seq} carries an invalid embedded Assistant stream: "${path}"`, { cause: error })
+  }
+  return stream
+}
+
 async function readStableSnapshot(
   path: string,
   signal: AbortSignal | undefined,
@@ -308,7 +445,12 @@ class MigratingJsonlRows {
   private rowIndex = 0
   private issue: Error | undefined
 
-  constructor(private readonly restore: SessionFormatRestore) {}
+  constructor(
+    private readonly restore: SessionFormatRestore,
+    private readonly captureSourceEvent?: (event: unknown) => void,
+    /** Admit one record that recovery skipped, so refusals cannot be suppressed. */
+    private readonly admitSkippedRow?: (row: unknown) => void,
+  ) {}
 
   /** Consume plaintext bytes following the independently decoded header. */
   write(chunk: Buffer): void {
@@ -362,8 +504,10 @@ class MigratingJsonlRows {
     if (this.issue !== undefined) {
       if (typeof row === 'object' && row !== null
         && (row as { type?: unknown }).type === 'turn/end') throw this.issue
+      this.admitSkippedRow?.(row)
       return
     }
+    this.captureSourceEvent?.(row)
     this.restore.decodeRow(row)
   }
 }
@@ -377,6 +521,7 @@ async function startMigrationStream(
   sourceVersion: number,
   format: Pick<JsonlGenerationFormatAdapter, 'createRestore'>,
   validateHistoricalHeader?: PrepareJsonlMigrationOptions['validateHistoricalHeader'],
+  captureSourceEvent?: (event: unknown) => void,
 ): Promise<StartedMigrationStream> {
   const value = parseJson(headerRecord.subarray(0, -1).toString('utf8'), 'header line')
   const version = storedVersion(value)
@@ -387,7 +532,12 @@ async function startMigrationStream(
   const validation = validateHistoricalHeader?.(header)
   if (validation !== undefined) await validation
   const stream = format.createRestore(header)
-  return { parser: new MigratingJsonlRows(stream) }
+  let admission: SessionFormatRestore | undefined
+  const admitSkippedRow = (row: unknown): void => {
+    admission ??= format.createRestore(header)
+    admission.decodeRow(row)
+  }
+  return { parser: new MigratingJsonlRows(stream, captureSourceEvent, admitSkippedRow) }
 }
 
 async function consumeMigrationBytes(
@@ -415,6 +565,7 @@ async function decodeStreamingMigration(
   format: Pick<JsonlGenerationFormatAdapter, 'createRestore'>,
   validateHistoricalHeader: PrepareJsonlMigrationOptions['validateHistoricalHeader'],
   signal?: AbortSignal,
+  captureSourceEvent?: (event: unknown) => void,
 ): Promise<SessionFormatArtifact> {
   signal?.throwIfAborted()
   if (compression === 'none') {
@@ -425,6 +576,7 @@ async function decodeStreamingMigration(
       sourceVersion,
       format,
       validateHistoricalHeader,
+      captureSourceEvent,
     )
     signal?.throwIfAborted()
     const bodyEnd = bytes.lastIndexOf(0x0A)
@@ -452,6 +604,7 @@ async function decodeStreamingMigration(
       sourceVersion,
       format,
       validateHistoricalHeader,
+      captureSourceEvent,
     )
     signal?.throwIfAborted()
     await consumeMigrationBytes(stream.parser, decoded, signal)
@@ -542,37 +695,10 @@ async function verifyCurrentGeneration(
     'detached',
     currentSessionMessageProjections,
   )
-  assertCurrentAssistantStreams(generation.events)
   return {
     identity: snapshot.identity,
     bytes: snapshot.bytes.length,
     digest: createHash('sha256').update(snapshot.bytes).digest('hex'),
-  }
-}
-
-/** Fully replay embedded streams only inside isolated current-generation verification. */
-function assertCurrentAssistantStreams(events: readonly SessionEvent[]): void {
-  for (const [index, event] of events.entries()) {
-    if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') continue
-    const assembler = new BlockAssembler()
-    let timed: ReturnType<typeof expandAssistantStream>
-    try {
-      timed = expandAssistantStream(event.data.stream)
-      for (const member of timed) assembler.push(member.chunk)
-    } catch (error: unknown) {
-      throw new Error(`seed ${event.type} at index ${index} has an invalid embedded stream`, { cause: error })
-    }
-    if (event.type === 'assistant/attempt' || timed.length === 0) continue
-    const content = event.data.interrupted === true ? assembler.interruptedBlocks() : assembler.blocks()
-    if (!isDeepStrictEqual(event.data.message.content, content)) {
-      throw new Error(`seed assistant/message at index ${index} content disagrees with its embedded stream`)
-    }
-    if (!isDeepStrictEqual(event.data.usage, assembler.usage)) {
-      throw new Error(`seed assistant/message at index ${index} usage disagrees with its embedded stream`)
-    }
-    if (!isDeepStrictEqual(event.data.message.source.replayState, assembler.replayState)) {
-      throw new Error(`seed assistant/message at index ${index} replay state disagrees with its embedded stream`)
-    }
   }
 }
 
@@ -968,6 +1094,7 @@ async function prepareMigration(
       format,
       options.validateHistoricalHeader,
       signal,
+      options.captureSourceEvent,
     )
   } catch (error: unknown) {
     if (format.isUnsupportedMigrationError?.(error) === true) {

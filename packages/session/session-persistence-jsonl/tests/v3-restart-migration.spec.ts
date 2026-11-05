@@ -1,11 +1,11 @@
 import { Context } from '@deepseek-ai/cordis'
-import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { generationLogPath } from '../src/format.ts'
+import { generationLogFilename, generationLogPath } from '../src/format.ts'
 import { compressZstdFrame } from '../src/zstd.ts'
 
 const roots: string[] = []
@@ -52,7 +52,7 @@ describe.each(['none', 'zstd'] as const)('V3 interrupted-turn publication (%s)',
     return { id, path, root, rows, mount }
   }
 
-  it('prepares read-only, publishes a verified V4 successor, and reopens without repeating the repair', async () => {
+  it('prepares read-only, publishes a verified V5 successor, and reopens without repeating the repair', async () => {
     const f = await fixture()
     const original = await identity(f.path)
     const directory = dirname(f.path)
@@ -62,7 +62,7 @@ describe.each(['none', 'zstd'] as const)('V3 interrupted-turn publication (%s)',
     let prepared: readonly SessionEvent[]
     try {
       prepared = (await reader.read()).events
-      expect(reader.header.version).toBe(4)
+      expect(reader.header.version).toBe(SESSION_FORMAT_VERSION)
       expect(prepared).toHaveLength(f.rows.length + 1)
       expect(prepared[4]).toEqual({ type: 'turn/end', seq: 4, time: 14, data: { turn: 1, reason: { kind: 'interrupted' } } })
       expect(prepared[7]).toMatchObject({ type: 'session/title', data: { messageSeqs: [6] } })
@@ -75,8 +75,8 @@ describe.each(['none', 'zstd'] as const)('V3 interrupted-turn publication (%s)',
     try { expect((await writer.read()).events).toEqual(prepared) } finally { await writer.close() }
     expect(await identity(f.path)).toEqual(original)
     expect((await readdir(directory)).filter(name => name !== 'session.lock').sort()).toEqual([
-      compression === 'none' ? 'session.v3.jsonl' : 'session.v3.jsonl.zstd',
-      compression === 'none' ? 'session.v4.jsonl' : 'session.v4.jsonl.zstd',
+      generationLogFilename(3, compression),
+      generationLogFilename(SESSION_FORMAT_VERSION, compression),
     ])
     const independent = await f.mount()
     const reopened = await independent.sessionPersistence.open(f.id, 'read')

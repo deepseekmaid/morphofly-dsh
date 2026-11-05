@@ -12,18 +12,21 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionEvent, SessionHeader, SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionHeader, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import {
   assertContiguous,
   SessionAlreadyExistsError,
   materializeAppendBatch,
   SessionAlreadyOwnedError,
+  SessionAssistantStreamUnavailableError,
   SessionHandleClosedError,
   SessionPersistenceNotFoundError,
   SessionPersistenceRevision,
   SessionReadOnlyError,
 } from '@deepseek-ai/dsh-session-persistence'
 import type {
+  AssistantStreamRecords,
   SessionAccess,
   SessionHandle,
   SessionHandleAppendOptions,
@@ -67,6 +70,17 @@ export interface JsonlHandleStorage {
   resolveCurrentLog(id: SessionId, signal?: AbortSignal): Promise<string | undefined>
   /** Read and validate the stored log at `path`, including its established event aliasing state. */
   readStoredLog(path: string, expectedId: SessionId, signal?: AbortSignal): Promise<SessionHandleReadResult>
+  /**
+   * Read the sidecar Assistant stream published beside the current generation.
+   * @returns the stored records, or `undefined` when the sequence has no sidecar.
+   */
+  readAssistantStream(header: SessionHeader, seq: SessionSeq, signal?: AbortSignal): Promise<AssistantStreamRecords | undefined>
+  /**
+   * Read one historical generation row's embedded Assistant stream without
+   * materializing its log.
+   * @returns the embedded records, or `undefined` when the row keeps none.
+   */
+  readEmbeddedAssistantStream(path: string, seq: SessionSeq, signal?: AbortSignal): Promise<AssistantStreamRecords | undefined>
   /** Whether the id is still a created-but-unmaterialized session here. */
   hasPendingSession(id: SessionId): boolean
   /** Acquire the session's cross-process write lock in its artifact directory. */
@@ -95,6 +109,8 @@ export interface StorageHandleState {
   inheritedEventCount: SessionLogOffset
   /** The validated stored prefix from a write open, served to reads until the first append. */
   primed?: SessionHandleReadResult | undefined
+  /** Historical generation selected at read open; its rows still embed settlement streams. */
+  assistantStreamSource?: string | undefined
 }
 
 /**
@@ -198,6 +214,53 @@ export class JsonlSessionHandle implements SessionHandle {
       eventState: source.eventState,
       events: source.events.slice(offset, offset + length),
     }
+  }
+
+  /**
+   * Read the lossless Assistant stream settled by one event; see the handle
+   * contract. The sidecar is authoritative for current V5 generations, while a
+   * handle opened over a historical generation falls back to that generation's
+   * embedded row.
+   * @param seq - sequence of the settlement event.
+   * @param options - optional cancellation.
+   * @returns the compact records, or `undefined` when the sequence is not an
+   *   Assistant settlement or does not exist.
+   * @throws {SessionAssistantStreamUnavailableError} when the sequence is a
+   *   settlement whose stored stream is missing or unreadable.
+   */
+  async readAssistantStream(
+    seq: SessionSeq | number,
+    options?: SessionHandleReadOptions,
+  ): Promise<AssistantStreamRecords | undefined> {
+    this.assertOpen('readAssistantStream')
+    const value = SessionSeq(seq)
+    options?.signal?.throwIfAborted()
+    let stored: AssistantStreamRecords | undefined
+    try {
+      stored = await this.storage.readAssistantStream(this.header, value, options?.signal)
+    } catch (error: unknown) {
+      throw new SessionAssistantStreamUnavailableError(this.id, value, { cause: error })
+    }
+    if (stored !== undefined) return stored
+    const event = await this.observedEventAt(value, options)
+    if (event === undefined || !isAssistantSettlement(event.type)) return undefined
+    const source = this.state.assistantStreamSource
+    if (source !== undefined) {
+      try {
+        const embedded = await this.storage.readEmbeddedAssistantStream(source, value, options?.signal)
+        if (embedded !== undefined) return embedded
+      } catch (error: unknown) {
+        throw new SessionAssistantStreamUnavailableError(this.id, value, { cause: error })
+      }
+    }
+    throw new SessionAssistantStreamUnavailableError(this.id, value)
+  }
+
+  /** Locate one log event this handle can already serve without reading the whole log. */
+  private async observedEventAt(seq: SessionSeq, options?: SessionHandleReadOptions): Promise<SessionEvent | undefined> {
+    const primed = this.state.primed
+    if (primed !== undefined) return primed.events[seq]
+    return (await this.read(seq, 1, options)).events[0]
   }
 
   /**
@@ -417,6 +480,11 @@ export class JsonlSessionHandle implements SessionHandle {
   private assertOpen(operation: string): void {
     if (this.closing !== undefined) throw new SessionHandleClosedError(this.id, operation)
   }
+}
+
+/** Whether one event type settles an Assistant stream that lives beside the log. */
+function isAssistantSettlement(type: SessionEvent['type']): boolean {
+  return type === 'assistant/message' || type === 'assistant/attempt'
 }
 
 /** Group one routed batch's claimed Assistant streams by the owning event sequence. */

@@ -154,10 +154,7 @@ function assertMigrated(result: Awaited<ReturnType<typeof readSession>>) {
   expect(events.map(event => event.seq)).toEqual(Array.from({ length: 23 }, (_, seq) => seq))
   expect(events.filter(event => event.type.startsWith('assistant/'))).toEqual([{
     type: 'assistant/message', seq: 6, time: 108, surfaceOp: 'append',
-    data: { turn: 1, step: 1, message: message('assistant', 'hello'), stream: [
-      { type: 'text-chunks', time0: 104, index: 0, dt: [1, 1], texts: ['he', 'l', 'lo'] },
-      { type: 'chunk', time: 107, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-    ] },
+    data: { turn: 1, step: 1, message: message('assistant', 'hello'), firstTokenTime: 104 },
   }])
   expect(events.filter(event => event.type === 'system/message').map(event => ({
     seq: event.seq, content: event.data.message.content, surfaceOp: event.surfaceOp, sourceEventSeqs: event.sourceEventSeqs,
@@ -217,6 +214,7 @@ describe.each([0, 1] as const)('V%s multi-edge durable publication', (version) =
     contexts.splice(contexts.indexOf(ctx), 1)
     const successor = generationLogPath(root, undefined, id, SESSION_FORMAT_VERSION, compression)
     expect((await readdir(dirname(path))).filter(name => name !== 'session.lock').sort())
+      // V0/V1 settlements are raw chunk events, so the migration tee has no embedded stream to move.
       .toEqual([basename(path), basename(successor)].sort())
     expect(await publishedRows(successor, compression)).toEqual([{ type: 'session', ...prepared.header }, ...prepared.events])
     expect(await observe(path)).toEqual(source)
@@ -266,6 +264,7 @@ describe.each([0, 1] as const)('V%s multi-edge durable publication', (version) =
     const successor = generationLogPath(root, undefined, id, SESSION_FORMAT_VERSION, compression)
     expect(await publishedRows(successor, compression)).toEqual([{ type: 'session', ...prepared.header }, ...expected])
     expect((await readdir(dirname(path))).filter(name => name !== 'session.lock').sort())
+      // V0/V1 settlements are raw chunk events, so the migration tee has no embedded stream to move.
       .toEqual([basename(path), basename(successor)].sort())
     await ctx.fiber.dispose()
     contexts.splice(contexts.indexOf(ctx), 1)
