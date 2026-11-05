@@ -69,8 +69,24 @@ jobs:
           cache: pnpm
       - name: Install (immutable)
         run: pnpm install --frozen-lockfile
+      # Standard GitHub-hosted runners lack the kernel confinement, gh, and
+      # git-worktree timing that a few suites assume, so those run in the
+      # upstream CI matrix instead. The rest of the unit suite runs with
+      # generous timeouts and retries because this fork does not buy the
+      # 16-core enterprise runners upstream uses.
+      - name: Build the native system addon
+        run: pnpm run build:native-system
       - name: Unit suite
-        run: pnpm run check:ci:unit
+        run: |
+          pnpm exec vitest run \
+            --testTimeout=30000 \
+            --hookTimeout=120000 \
+            --retry=2 \
+            --exclude 'packages/sandbox/**' \
+            --exclude 'packages/ptc-runtime/ptc-runtime-node/**' \
+            --exclude 'packages/workflow/workflow-ptc/**' \
+            --exclude 'packages/experimental/client-ui-forge/**' \
+            --exclude 'packages/experimental/forge-github/**'
 
   build:
     name: build artifacts

@@ -39,18 +39,7 @@ function world(): World {
   const children: { header: { parentSession?: SessionId } }[] = []
   const states = new Map<SessionId, FakeState>()
   const disposed: SessionId[] = []
-  const owner: World = {
-    ctx: undefined as unknown as Context,
-    agents,
-    warnings,
-    children,
-    jobs: undefined,
-    terminals: undefined,
-    failAgentLookup: false,
-    states,
-    disposed,
-  }
-  owner.ctx = {
+  const ctx = {
     agents: {
       get: (id: SessionId) => {
         if (owner.failAgentLookup) throw new Error('registry unavailable')
@@ -60,7 +49,18 @@ function world(): World {
     sessions: { list: () => children },
     get: (name: string) => (name === 'jobs' ? owner.jobs : name === 'terminals' ? owner.terminals : undefined),
     logger: { warn: (message: string) => { warnings.push(message) } },
-  } as unknown as Context
+  } as Context
+  const owner: World = {
+    ctx,
+    agents,
+    warnings,
+    children,
+    jobs: undefined,
+    terminals: undefined,
+    failAgentLookup: false,
+    states,
+    disposed,
+  }
   return owner
 }
 
@@ -70,9 +70,11 @@ function publish(owner: World, id: SessionId): { handle: AgentHandle; state: Fak
   const agent = {
     id,
     get status() { return state.status },
-    get inbox() { return { nextTurn: state.nextTurn, nextStep: state.nextStep } },
+    get inbox(): { readonly nextTurn: readonly unknown[]; readonly nextStep: readonly unknown[] } {
+      return { nextTurn: state.nextTurn, nextStep: state.nextStep }
+    },
     whenIdle: () => state.gate?.promise ?? Promise.resolve(),
-  } as unknown as Agent
+  } as Agent
   owner.states.set(id, state)
   owner.agents.set(id, agent)
   const handle: AgentHandle = {
@@ -183,7 +185,7 @@ describe('IdleAgentRelease scheduler', () => {
     now = 10
     const pending = release.releaseIdle()
     await Promise.resolve()
-    const replacement = { id: ids.a, status: 'idle', inbox: { nextTurn: [], nextStep: [] } } as unknown as Agent
+    const replacement = publish(owner, ids.a).handle.agent
     owner.agents.set(ids.a, replacement)
     state.gate.resolve()
     await pending

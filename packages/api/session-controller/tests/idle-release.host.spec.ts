@@ -69,12 +69,12 @@ class FakeLifecycles {
       ctx: this.ctx,
       get status() { return state.status },
       inbox: {
-        get nextTurn() { return state.nextTurn },
-        get nextStep() { return state.nextStep },
+        get nextTurn(): readonly UserMessage[] { return state.nextTurn },
+        get nextStep(): readonly UserMessage[] { return state.nextStep },
       },
       whenIdle: () => state.idleGate?.promise ?? Promise.resolve(),
       cancel: () => {},
-    } as unknown as Agent
+    } as Agent
     const detachAgent = this.ctx.agents.enter(agent)
     this.agents.set(id, agent)
     let disposed = false

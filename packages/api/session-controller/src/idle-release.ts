@@ -82,7 +82,10 @@ export class IdleAgentRelease {
     return this.graceMs > 0
   }
 
-  /** Start the periodic scan; returns the disposer that clears the timer. */
+  /**
+   * Start the periodic scan.
+   * @returns the disposer that stops the scan and clears its timer.
+   */
   start(): () => void {
     if (!this.enabled) return () => {}
     const timer = setInterval(() => {
@@ -95,13 +98,19 @@ export class IdleAgentRelease {
     return () => { clearInterval(timer) }
   }
 
-  /** Record one published Agent lifecycle and stamp its activation. */
+  /**
+   * Record one published Agent lifecycle and stamp its activation.
+   * @param handle - the published Agent lifecycle to track.
+   */
   track(handle: AgentHandle): void {
     if (!this.enabled) return
     this.tracked.set(handle.agent.id, { handle, lastActive: this.now() })
   }
 
-  /** Stamp an activation that arrives while a release may be in flight. */
+  /**
+   * Stamp an activation that arrives while a release may be in flight.
+   * @param sessionId - the Session whose activation to stamp.
+   */
   touch(sessionId: SessionId): void {
     const tracked = this.tracked.get(sessionId)
     if (tracked !== undefined) tracked.lastActive = this.now()
