@@ -2,13 +2,14 @@ import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/pro
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   normalizeSessionLog,
   normalizeSessionSnapshot,
   normalizeSessionSnapshots,
   normalizeStdout,
+  parsePersistedSessionFilename,
   scrubModelRequestBulk,
   type NormalizeContext,
 } from '@deepseek-ai/dsh-session-snapshot'
@@ -291,9 +292,13 @@ async function readPersistedLog(file: string): Promise<string> {
   return Buffer.concat(decoded).toString('utf8')
 }
 
+/** Whether one directory entry names a committed Session log rather than a stream sidecar. */
+function isSessionLogFile(file: string): boolean {
+  return parsePersistedSessionFilename(basename(file)) !== undefined
+}
+
 async function persistedLogs(cwd: string, root: string = join(cwd, '.sessions')): Promise<PersistedLog[]> {
-  const files = (await readdir(root, { recursive: true }))
-    .filter(file => file.endsWith('.jsonl') || file.endsWith('.jsonl.zstd'))
+  const files = (await readdir(root, { recursive: true })).filter(isSessionLogFile)
   return Promise.all(files.map(async (file) => {
     const content = await readPersistedLog(join(root, file))
     return { content, header: parseJsonl(content)[0] ?? {} }

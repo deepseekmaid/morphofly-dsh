@@ -5,13 +5,14 @@
 
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import {
   fixtureContext,
   normalizeSessionSnapshot,
   normalizeSessionSnapshots,
+  parsePersistedSessionFilename,
   type NormalizeContext,
 } from '@deepseek-ai/dsh-session-snapshot'
 import { LOADER_SMOKE_TEST_TIMEOUT_MS, runLoaderSmoke } from '@deepseek-ai/dsh-loader-smoke'
@@ -178,7 +179,7 @@ describe('agent-instructions resume snapshot', () => {
         expect(JSON.stringify(workspaceEvents.at(-1)?.data?.content)).toContain(newInstruction)
 
         const files = await readdir(join(cwd, '.sessions'), { recursive: true })
-        expect(files.filter(file => file.endsWith('.jsonl'))).toHaveLength(1)
+        expect(files.filter(file => parsePersistedSessionFilename(basename(file)) !== undefined)).toHaveLength(1)
       },
     })
 
