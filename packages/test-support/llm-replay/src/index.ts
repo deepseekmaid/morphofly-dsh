@@ -336,6 +336,36 @@ export function parseSessionLog(text: string): SessionEvent[] {
   return parseSessionFixture(text).events
 }
 
+/**
+ * Parse one snapshot artifact into current events plus the reader that supplies
+ * every settlement's exact Assistant stream.
+ *
+ * `parseSessionLog` returns migrated events, whose V5 settlements no longer
+ * embed a stream; a V5 recording keeps those streams in its committed
+ * `*.streams.jsonl` sidecar, while released rows still carry them. Adapters that
+ * derive a replay script themselves need both, so the sidecar wins per seq and
+ * the fixture rows fill any settlement the sidecar omits.
+ * @param text - complete Session fixture text.
+ * @param streamFixture - optional committed Assistant-stream fixture text.
+ * @returns the migrated events and the stream reader derivation requires.
+ */
+export function parseSessionFixtureWithStreams(
+  text: string,
+  streamFixture?: string,
+): { events: SessionEvent[]; readAssistantStream: AssistantStreamReader } {
+  const fixture = parseSessionFixture(text)
+  const sidecar = streamFixture === undefined || streamFixture.length === 0
+    ? undefined
+    : parseAssistantStreamFixture(streamFixture, 'Assistant-stream fixture')
+  return {
+    events: fixture.events,
+    readAssistantStream: mergedStreamReader(
+      sidecar === undefined ? undefined : event => sidecar.get(event.seq),
+      fixture.readAssistantStream,
+    ),
+  }
+}
+
 /** Parse, complete, decode, and migrate one projected snapshot artifact without writing its source. */
 function parseSessionFixture(text: string): ParsedSessionFixture {
   let headerLineNumber: number | undefined

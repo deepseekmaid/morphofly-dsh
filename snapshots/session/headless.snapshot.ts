@@ -424,6 +424,7 @@ function stderrFromSession(log: string): string {
     open = false
     endsWithNewline = true
   }
+  const chunkSteps = new Set<string>()
   const consume = (type: unknown, data: JsonObject | undefined): void => {
     if (type === 'reasoning-chunks') {
       if (!Array.isArray(data?.texts) || data.texts.some(text => typeof text !== 'string')) {
@@ -481,21 +482,28 @@ function stderrFromSession(log: string): string {
         continue
       }
       // Session V5 keeps no embedded stream: the committed message content is
-      // the only record of what the model emitted for this settlement.
+      // the only record of what the model emitted for this settlement. A
+      // released chunk log already counted this step's reasoning.
       const message = data?.message as JsonObject | undefined
       const content = message?.content
+      const fromChunkLog = typeof data?.turn === 'number' && typeof data?.step === 'number'
+        && chunkSteps.has(`${data.turn}/${data.step}`)
       if (record.type === 'assistant/message' && Array.isArray(content)) {
         for (const block of content) {
           if (block === null || typeof block !== 'object' || Array.isArray(block)) {
             throw new Error('headless snapshot assistant content has an invalid block')
           }
           const typed = block as JsonObject
-          if (typed.type === 'reasoning' && typeof typed.text === 'string') appendReasoning(typed.text)
+          if (typed.type === 'reasoning' && typeof typed.text === 'string' && !fromChunkLog) appendReasoning(typed.text)
           else if (typed.type === 'text' || typed.type === 'tool-call') close()
         }
         close()
       }
       continue
+    }
+    if ((record.type === 'reasoning-chunks' || record.type === 'assistant/chunk' || record.type === 'chunk')
+      && typeof data?.turn === 'number' && typeof data?.step === 'number') {
+      chunkSteps.add(`${data.turn}/${data.step}`)
     }
     consume(record.type, data)
   }
@@ -990,6 +998,7 @@ async function verifyProviderCwdResume(
   model: { provider: string; model: string },
   fixture: string,
   task: string,
+  streamFile?: string,
 ): Promise<void> {
   const providerCwd = scenario.manifest.environment?.DSH_SNAPSHOT_PROVIDER_CWD
   const primary = initial[0]
@@ -1002,6 +1011,7 @@ async function verifyProviderCwdResume(
     DSH_HOME: join(cwd, '.dsh'),
     DSH_SNAPSHOT: 'replay',
     DSH_SNAPSHOT_FILE: fixture,
+    ...streamFile === undefined ? {} : { DSH_SNAPSHOT_STREAM_FILES: streamFile },
     DSH_SNAPSHOT_PROVIDER: model.provider,
     DSH_SNAPSHOT_MODEL: model.model,
     DSH_PERMISSION_MODE: 'read-only',
@@ -1594,6 +1604,7 @@ describe('headless recorded-session snapshots', () => {
               if (model === undefined) throw new Error('provider-cwd resume requires a recorded model')
               await verifyProviderCwdResume(
                 scenario, cwd, actualLogs, patches, model, join(scenario.dir, fixtureFiles[0] as string), task,
+                committedStreamFiles[0] === undefined ? undefined : join(scenario.dir, committedStreamFiles[0]),
               )
             }
             if (scenario.name === 'background-confinement-failure') {

@@ -15,8 +15,8 @@ import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-schedule'
 import type {} from '@deepseek-ai/dsh-subagent'
 import {
-  fixtureUserPrompts, launchWebScaffold, normalizeWebSessionVolatiles, rawSessionLog, readPersistedEvents,
-  recordedSessionFixturePath, selectedSessionFixture, webSnapshotMode,
+  fixtureUserPrompts, harvestSessionStreams, launchWebScaffold, normalizeWebSessionVolatiles, rawSessionLog,
+  readPersistedEvents, recordedSessionFixturePath, selectedSessionFixture, webSnapshotMode, writeSessionStreamFixture,
 } from './scaffold.ts'
 import { REPO_ROOT } from './support.ts'
 
@@ -95,6 +95,14 @@ it.skipIf(MODE === 'record')('replays inherited schedule tools and refusals in a
         ))).split(scaffold.harnessHome).join('{{harnessHome}}')), expected))
       await Promise.all(expected.map((log, index) => writeFile(
         recordedSessionFixturePath(paths[index]!, sessions[index]!.header.version), log,
+      )))
+      await Promise.all(expected.map(async (_log, index) => writeSessionStreamFixture(
+        paths[index]!,
+        index,
+        sessions[index]!,
+        await harvestSessionStreams(scaffold.ctx.sessionPersistence, sessions[index]!),
+        { sessionIds: sessions.map(session => String(session.id)), cwd: scaffold.workspaceCwd },
+        scaffold.harnessHome,
       )))
     }
     expect(normalizeSessionSnapshots(raw, context))
