@@ -32,7 +32,7 @@ import {
   type SessionPersistenceSnapshot, type SessionPersistenceStatOptions,
   type SessionPersistenceRevision as PersistenceRevision,
 } from '@deepseek-ai/dsh-session-persistence'
-import { JsonlBackendTracker, JsonlSessionHandle, type StorageHandleState } from './storage.ts'
+import { JsonlBackendTracker, JsonlSessionHandle, type AssistantStreamCarry, type StorageHandleState } from './storage.ts'
 import { SessionWriteLease } from './lease.ts'
 import { SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionHeader, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
@@ -45,6 +45,7 @@ import {
   compressZstdFrame, createZstdFrameDecoder, decompressZstdFrame, decompressZstdPrefix, scanZstdFrames,
 } from './zstd.ts'
 import { ensureDurableDirectoryWin32, publishNewFileWin32 } from './win32.ts'
+import { writeAssistantStream } from './streams.ts'
 import { verifyCurrentGenerationInWorker } from './migration-verifier.ts'
 import { prepareCatalogFacts } from './catalog-migration.ts'
 import {
@@ -67,6 +68,10 @@ export type { JsonlCompression } from './format.ts'
 const COLD_LOG_MEMO_MAX_ENTRIES = 2
 
 const DEFAULT_COMPRESSION: JsonlCompression = 'zstd'
+
+/** No Assistant streams accompany this write (header-only materialization). */
+const NO_ASSISTANT_STREAMS: AssistantStreamCarry = new Map()
+
 /**
  * Internal scheduling constant, not deployment configuration: balance
  * frame-boundary event-loop yields against `setImmediate` overhead. One frame
@@ -907,19 +912,21 @@ class JsonlSessionPersistence extends SessionPersistence {
    * @param events - the validated contiguous batch, in seq order.
    * @param isMaterialized - whether the session already has a durable artifact.
    * @param inheritedEventCount - the exact fork-inherited prefix length written into a materializing header line.
+   * @param assistantStreams - streams carried by this batch, keyed by owning event sequence.
    */
   async persistBatch(
     header: SessionHeader,
     events: readonly SessionEvent[],
     isMaterialized: boolean,
     inheritedEventCount: SessionLogOffsetType,
+    assistantStreams: AssistantStreamCarry,
   ): Promise<void> {
     this.coldLogMemo.delete(header.id)
     await this.ensureRootEncoding()
     if (isMaterialized) {
-      await this.appendLines(header, events)
+      await this.appendLines(header, events, assistantStreams)
     } else {
-      await this.materialize(header, inheritedEventCount, events)
+      await this.materialize(header, inheritedEventCount, events, assistantStreams)
       this.tracker.materialized(header.id)
     }
   }
@@ -932,7 +939,7 @@ class JsonlSessionPersistence extends SessionPersistence {
   async persistHeader(header: SessionHeader, inheritedEventCount: SessionLogOffsetType): Promise<void> {
     this.coldLogMemo.delete(header.id)
     await this.ensureRootEncoding()
-    await this.materialize(header, inheritedEventCount, [])
+    await this.materialize(header, inheritedEventCount, [], NO_ASSISTANT_STREAMS)
     this.tracker.materialized(header.id)
   }
 
@@ -1266,7 +1273,9 @@ class JsonlSessionPersistence extends SessionPersistence {
     meta: SessionHeader,
     inheritedEventCount: SessionLogOffsetType,
     events: readonly SessionEvent[],
+    assistantStreams: AssistantStreamCarry,
   ): Promise<void> {
+    await this.writeAssistantStreams(meta, events, assistantStreams)
     const project = projectDir(this.root, meta.cwd)
     const dir = sessionDir(this.root, meta.cwd, meta.id)
     const finalPath = logPath(this.root, meta.cwd, meta.id, this.compression)
@@ -1358,6 +1367,25 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
   }
 
+  /**
+   * Durably publish the Assistant streams carried by one batch, in sequence
+   * order, before any of the batch's log lines. A retry re-serializes the same
+   * carrier, so a sidecar that already landed is reused instead of conflicting.
+   */
+  private async writeAssistantStreams(
+    meta: SessionHeader,
+    events: readonly SessionEvent[],
+    assistantStreams: AssistantStreamCarry,
+  ): Promise<void> {
+    if (assistantStreams.size === 0) return
+    const dir = sessionDir(this.root, meta.cwd, meta.id)
+    for (const event of events) {
+      const stream = assistantStreams.get(event.seq)
+      if (stream === undefined) continue
+      await writeAssistantStream(dir, event.seq, stream, this.compression)
+    }
+  }
+
   private async writeSyncedTempFile(finalPath: string, content: Buffer | string): Promise<string> {
     const tmp = `${finalPath}.${randomBytes(6).toString('hex')}.tmp`
     const handle = await open(tmp, 'wx', 0o600)
@@ -1410,7 +1438,12 @@ class JsonlSessionPersistence extends SessionPersistence {
    * previous size before rethrowing because the unchanged cursor will retry the
    * batch; leaving partial bytes would create duplicate sequence numbers.
    */
-  private async appendLines(meta: SessionHeader, events: readonly SessionEvent[]): Promise<void> {
+  private async appendLines(
+    meta: SessionHeader,
+    events: readonly SessionEvent[],
+    assistantStreams: AssistantStreamCarry,
+  ): Promise<void> {
+    await this.writeAssistantStreams(meta, events, assistantStreams)
     const content = await this.encodeEventBatch(events)
     const path = logPath(this.root, meta.cwd, meta.id, this.compression)
     const handle = await open(path, 'a')

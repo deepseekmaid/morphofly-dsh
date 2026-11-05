@@ -212,15 +212,20 @@ async function assertReusableAssistantStream(
   if (!existingPlaintext.equals(plaintext)) throw new AssistantStreamConflictError(path)
 }
 
-/** Write `content` to a synced sibling temp file and return its path. */
+/** Write `content` to a synced sibling temp file and return its path; a failed write leaves no file. */
 async function writeSyncedTempFile(path: string, content: Buffer): Promise<string> {
   const temporary = `${path}.${randomBytes(6).toString('hex')}.tmp`
   const handle = await open(temporary, 'wx', 0o600)
   try {
-    await handle.writeFile(content)
-    await handle.sync()
-  } finally {
-    await handle.close()
+    try {
+      await handle.writeFile(content)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+  } catch (error: unknown) {
+    await rm(temporary, { force: true })
+    throw error
   }
   return temporary
 }

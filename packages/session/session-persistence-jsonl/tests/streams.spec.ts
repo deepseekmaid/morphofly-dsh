@@ -4,8 +4,8 @@
  * works in its own `mkdtemp` Session directory and cleans it up afterwards.
  */
 
-import { afterEach, describe, expect, it } from 'vitest'
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
@@ -39,6 +39,7 @@ async function sessionRoot(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -201,6 +202,26 @@ describe('immutable sidecar publication', () => {
     const entries = await readdir(assistantStreamDirectory(root))
     expect(entries.some(entry => entry.endsWith('.tmp'))).toBe(false)
     expect(entries.sort()).toEqual(['s1.jsonl', 's2.jsonl'])
+  })
+})
+
+
+describe('failed publication cleanup', () => {
+  it('removes the temporary file when the temp write itself fails', async () => {
+    const root = await sessionRoot()
+    const probe = await open(join(root, 'probe'), 'w')
+    const prototype = Object.getPrototypeOf(probe) as { writeFile: (this: unknown, data: string | Uint8Array) => Promise<void> }
+    await probe.close()
+    const spy = vi.spyOn(prototype, 'writeFile').mockImplementationOnce(async () => {
+      throw new Error('simulated temporary write failure')
+    })
+    try {
+      await expect(writeAssistantStream(root, SessionSeq(0), SAMPLE_STREAM, 'none'))
+        .rejects.toThrow('simulated temporary write failure')
+    } finally {
+      spy.mockRestore()
+    }
+    await expect(readdir(assistantStreamDirectory(root))).resolves.toEqual([])
   })
 })
 

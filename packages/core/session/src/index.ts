@@ -854,7 +854,7 @@ export class Session {
   private appendCarrying<T extends SessionEventType>(
     type: T,
     data: SessionEventMap[T],
-    surfaceOpts: SurfaceIntent<T> | undefined,
+    surfaceOpts: SurfaceIntent | undefined,
     carry: SessionAppendCarry | undefined,
   ): SessionEvent<T> {
     this.publicationEntry()
