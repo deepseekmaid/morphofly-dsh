@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, Inbox } from '@deepseek-ai/dsh-agent'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionHeader, UserMessage } from '@deepseek-ai/dsh-session'
@@ -78,7 +78,13 @@ class FakeLifecycles {
       inbox: {
         get nextTurn(): readonly UserMessage[] { return state.nextTurn },
         get nextStep(): readonly UserMessage[] { return state.nextStep },
-      },
+        clear: () => {},
+        append: () => {},
+        prepend: () => {},
+        replace: () => false,
+        remove: () => false,
+        splice: () => [],
+      } satisfies Inbox,
       whenIdle: () => state.idleGate?.promise ?? Promise.resolve(),
       cancel: () => {},
     })
