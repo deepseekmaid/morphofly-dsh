@@ -13,6 +13,8 @@ const organizationUrl = new RegExp(`\\bgithub\\.com/${organization}(?![a-z0-9-])
 const kitRepositoryUrl = new RegExp(`\\bgithub\\.com/${organization}/libreoffice-kit(?:\\.git)?(?=/|[^a-zA-Z0-9_.-]|$)`, 'g')
 // Decimal-only tokens collide with sizes, counts, and version components; see docs/AGENTS.md#repository-references.
 const commitCandidate = /(?<![a-z0-9])(?=[\da-f]{0,39}[a-f])[\da-f]{7,40}(?![a-z0-9])/gi
+// A fork release tag names a published artifact, not a mutable commit reference; its head suffix is not a citation.
+const forkReleaseTag = /\bfork-v[\w.-]*-[\da-f]{7,40}\b/gi
 const excludedPrefixes = ['vendor/', '.agents/notes/archived/']
 const gitOutputLimit = 64 * 1024 * 1024
 // One 41-byte line per object; 1.2 million objects produce about 49 MiB.
@@ -48,10 +50,11 @@ export function findRepositoryReferences(
   if (!isMaintained(file)) return []
   const references: RepositoryReference[] = []
   for (const [index, line] of source.split('\n').entries()) {
-    if (organizationUrl.test(canonicalReferenceText(line).replace(kitRepositoryUrl, ''))) {
+    const scanned = line.replace(forkReleaseTag, '')
+    if (organizationUrl.test(canonicalReferenceText(scanned).replace(kitRepositoryUrl, ''))) {
       references.push({ file, line: index + 1, kind: 'organization-url' })
     }
-    if ([...line.matchAll(commitCandidate)].some(match => commits.has(match[0].toLowerCase()))) {
+    if ([...scanned.matchAll(commitCandidate)].some(match => commits.has(match[0].toLowerCase()))) {
       references.push({ file, line: index + 1, kind: 'commit-hash' })
     }
   }
@@ -113,7 +116,7 @@ export function uniquePrefixMatch(objects: readonly string[], prefix: string): s
  */
 export function repositoryCommits(repoRoot: string, sources: Iterable<string>): Set<string> {
   const candidates = [...new Set([...sources].flatMap(source =>
-    [...source.matchAll(commitCandidate)].map(match => match[0].toLowerCase())))]
+    [...source.replace(forkReleaseTag, '').matchAll(commitCandidate)].map(match => match[0].toLowerCase())))]
   if (candidates.length === 0) return new Set()
   // Git resolves prefixes across all available objects, including unreachable and alternate ones;
   // one listing of those objects replaces one Git prefix lookup per candidate.
