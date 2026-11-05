@@ -15,6 +15,11 @@ An older build refuses a V5 log instead of interpreting it, so a host or SDK tha
 
 Reading a stored V4 Session produces an in-memory V5 view without writing; the first write open publishes the V5 generation and its sidecar. Nothing migrates Sessions in bulk. Because the V4 generation stays in place, a migrated Session occupies roughly 2.5 times one generation, combining the V4 generation, the V5 main log, and the sidecar, and that cost keeps growing.
 
+## Limitations
+
+- A product Session fork still copies only the inherited event prefix. Inherited settlements therefore have no sidecars in the fork, and reading their streams fails until those files are copied from the source Session directory. Export archives do include the sidecars.
+- A subagent provider that observes only child session events no longer sees the text of a failed attempt once its final message is malformed or empty; that text survives only in the child's sidecar.
+
 ## Migration
 
 1. Stop the current build and back up the Sessions directory: `cp -a ~/.dsh/sessions ~/.dsh/sessions.v4-backup`. Confirm the copy exists before upgrading.

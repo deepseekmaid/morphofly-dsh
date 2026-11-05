@@ -11,6 +11,9 @@
 /session-format-v5-moves-assistant-streams-into-a-sidecar/change:
   en: 325656327e8688f4
   zh: 46acd38875e6bc7b
+/session-format-v5-moves-assistant-streams-into-a-sidecar/limitations:
+  en: 64b96549209e66e6
+  zh: 1209b4d1b47509c4
 /session-format-v5-moves-assistant-streams-into-a-sidecar/migration:
   en: cf58f3dbaa5dcc6f
   zh: aa17737a0cdf9df0
