@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { SessionFormatEventCollector, type SessionFormatEvent, type SessionFormatJsonObject } from '@deepseek-ai/dsh-session-format'
-import { createSessionFormatCatalogWithChildren, sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
+import { SessionFormatEventCollector, type SessionFormatEvent, type SessionFormatHeader, type SessionFormatJsonObject } from '@deepseek-ai/dsh-session-format'
+import {
+  createV4SessionFormatCatalogWithChildren as createSessionFormatCatalogWithChildren,
+  restoreV4AsCurrent,
+  v4SessionFormatCatalog as sessionFormatCatalog,
+} from './v4-target-catalog.ts'
 import { Session, SessionId, SessionLogOffset, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
 import { imageOffloadProjection } from '@deepseek-ai/dsh-compaction-image-offload/projection'
 import { createSessionFormatV3ToV4 } from '../src/index.ts'
 import { remapV3References } from '../src/references.ts'
 
 const header = { type: 'session', version: 3, id: 'restart', createdAt: 1, isSeeded: false, delegationDepth: 0 }
-const nativeHeader: SessionHeader = { version: 4, id: SessionId(header.id), createdAt: 1, isSeeded: false, delegationDepth: 0 }
+const nativeHeader: SessionFormatHeader = { version: 4, id: header.id, createdAt: 1, isSeeded: false, delegationDepth: 0 }
 const user = (id: string) => ({ id, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: id }] })
 const row = (type: string, data: SessionFormatJsonObject) => ({ type, data })
 const splice = () => row('agent/inbox/spliced', { target: 'next-turn', inserted: [user('next')] })
@@ -94,7 +98,8 @@ describe('V3 interrupted-turn migration', () => {
     expect(artifact.events[15]).toMatchObject({ data: { source: { kind: 'session-reference', sessionId: 'other', seq: 4, sessionFormatVersion: 3 } } })
     expect(artifact.events[16]).toEqual({ ...source[15], type: 'plugin:external/opaque', seq: 16 })
     expect(artifact.header).toEqual(nativeHeader)
-    const session = Session.fromRestore(nativeHeader.id, artifact.events as SessionEvent[], nativeHeader, SessionLogOffset(0), 'detached')
+    const current = restoreV4AsCurrent(artifact)
+    const session = Session.fromRestore(SessionId(current.header.id), current.events as SessionEvent[], current.header as unknown as SessionHeader, SessionLogOffset(current.inheritedEventCount), 'detached')
     expect(session.deriveMessages().map(message => message.id)).toEqual(['checkpoint', 'capture'])
     expect(source).toEqual(original)
   })
@@ -107,7 +112,8 @@ describe('V3 interrupted-turn migration', () => {
     ]))
     expect(artifact.events[7]).toMatchObject({ data: { targets: [{ seq: 6, imageIndexes: [0] }] } })
     expect(artifact.header).toEqual(nativeHeader)
-    const session = Session.fromRestore(nativeHeader.id, artifact.events as SessionEvent[], nativeHeader, SessionLogOffset(0), 'detached', [imageOffloadProjection])
+    const current = restoreV4AsCurrent(artifact)
+    const session = Session.fromRestore(SessionId(current.header.id), current.events as SessionEvent[], current.header as unknown as SessionHeader, SessionLogOffset(current.inheritedEventCount), 'detached', [imageOffloadProjection])
     expect(session.deriveMessages()).toMatchObject([{ id: 'picture', content: [{ type: 'image', attachment: image.attachment, offloaded: true }] }])
   })
 

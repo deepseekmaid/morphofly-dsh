@@ -5,6 +5,7 @@ import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import { SessionFormatEventCollector } from '@deepseek-ai/dsh-session-format'
 import type { SessionFormatArtifact, SessionFormatEvent, SessionFormatJsonValue } from '@deepseek-ai/dsh-session-format'
 import { assertV4RowAdmission, releasedV4SessionFormatCodec as codec, restoreReleasedV4Artifact } from '../src/index.ts'
+import { restoreV4AsCurrent } from './v4-target-catalog.ts'
 
 type Row = {
   type: string
@@ -44,8 +45,9 @@ describe('V4 developer relationship admission', () => {
       ...coordinates, message: { id: 'replacement', role: 'system', source: { kind: 'system-prompt' }, content: [{ type: 'text', text: 'Updated' }] },
     } }
     const input = restore([...begin, system, emptyDeveloper, replacement])
-    const session = Session.fromRestore(SessionId(input.header.id), input.events as SessionEvent[],
-      input.header as unknown as SessionHeader, SessionLogOffset(0), 'detached')
+    const current = restoreV4AsCurrent(input)
+    const session = Session.fromRestore(SessionId(current.header.id), current.events as SessionEvent[],
+      current.header as unknown as SessionHeader, SessionLogOffset(current.inheritedEventCount), 'detached')
     expect(session.surface.nodes).toEqual([4, 3])
     expect(session.deriveMessages().map(message => message.id)).toEqual(['replacement'])
     expect(input.events[3]?.data).toEqual(emptyDeveloper.data)
