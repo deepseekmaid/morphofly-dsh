@@ -41,6 +41,13 @@ interface FakeLifecycle {
   idleGate?: IdleGate
 }
 
+/** Narrow the controllable fields this test publishes into a full Agent. */
+function agentDouble(
+  parts: Pick<Agent, 'id' | 'session' | 'ctx' | 'status' | 'inbox' | 'whenIdle' | 'cancel'>,
+): Agent {
+  return parts as Agent
+}
+
 /** Publishes real store entries around controllable Agent stand-ins. */
 class FakeLifecycles {
   readonly lifecycles = new Map<SessionId, FakeLifecycle>()
@@ -63,7 +70,7 @@ class FakeLifecycles {
     const session = this.ctx.sessions.prepare(id, { meta: header(id) })
     const detachSession = this.ctx.sessions.enter(session)
     this.ctx.sessions.announce(session)
-    const agent = {
+    const agent = agentDouble({
       id,
       session,
       ctx: this.ctx,
@@ -74,7 +81,7 @@ class FakeLifecycles {
       },
       whenIdle: () => state.idleGate?.promise ?? Promise.resolve(),
       cancel: () => {},
-    } as Agent
+    })
     const detachAgent = this.ctx.agents.enter(agent)
     this.agents.set(id, agent)
     let disposed = false
