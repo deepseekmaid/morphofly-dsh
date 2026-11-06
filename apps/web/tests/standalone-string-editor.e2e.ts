@@ -12,7 +12,7 @@ import {
 import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
 
 const DIR = fileURLToPath(new URL('../../../snapshots/web/optional-string-editor', import.meta.url))
-const FIXTURE = join(DIR, 'session.v4.jsonl')
+const FIXTURE = join(DIR, 'session.v5.jsonl')
 const MODE = webSnapshotMode()
 
 describe('web snapshot: standalone string editor through PTC', () => {
@@ -82,7 +82,7 @@ describe('web snapshot: standalone string editor through PTC', () => {
 
   it.skipIf(MODE !== 'replay')('keeps the owned fixture artifacts closed', async () => {
     await assertFixtureInventory(DIR, [
-      'session.v4.jsonl', 'system-prompt.expected.md', 'tool-schemas.expected.json', 'ui.expected.md', 'workspace.expected',
+      'session.v5.jsonl', 'system-prompt.expected.md', 'tool-schemas.expected.json', 'ui.expected.md', 'workspace.expected',
     ])
   })
 })

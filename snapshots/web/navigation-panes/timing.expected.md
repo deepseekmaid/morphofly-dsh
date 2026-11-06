@@ -7,6 +7,6 @@
   - term: TTFT
   - definition: {{duration}}
   - term: Generation
-  - definition: {{duration}}
+  - definition: 1767225600.0 s
   - term: Throughput
   - definition: {{throughput}} tok/s

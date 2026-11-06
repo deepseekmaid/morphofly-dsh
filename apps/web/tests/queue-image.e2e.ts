@@ -12,10 +12,11 @@ import { join } from 'node:path'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterEach, describe, expect, it, onTestFailed } from 'vitest'
-import { deriveReplayScript, parseSessionLog, type ReplayEntry } from '@deepseek-ai/dsh-llm-replay'
+import type { ReplayEntry } from '@deepseek-ai/dsh-llm-replay'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import {
   captureStableAria, compareOrRefreshGolden,
+  deriveFixtureReplayScript,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
 import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
@@ -70,7 +71,7 @@ describe('web e2e: queued image submission', () => {
     overrideDir = await mkdtemp(join(tmpdir(), 'dsh-web-queued-image-'))
     const readyFile = join(overrideDir, '.hang-ready')
     const overridePath = join(overrideDir, 'replay.override.json')
-    const recorded = deriveReplayScript(parseSessionLog(await readFile(FIXTURE, 'utf8')))
+    const recorded = await deriveFixtureReplayScript(FIXTURE)
     expect(recorded).toHaveLength(1)
     const replay: ReplayEntry[] = [
       { kind: 'hang', readyFile },

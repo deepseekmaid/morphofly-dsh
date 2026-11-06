@@ -22,7 +22,7 @@ describe('web e2e: bare URL before CJK punctuation', () => {
 
   beforeAll(async () => {
     scaffold = await launchWebScaffold({})
-    await seedSession(scaffold, await readFile(join(SNAPSHOT_DIR, 'session.v4.jsonl'), 'utf8'), 'autolink-cjk-punctuation')
+    await seedSession(scaffold, await readFile(join(SNAPSHOT_DIR, 'session.v5.jsonl'), 'utf8'), 'autolink-cjk-punctuation')
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
     tripwire = watchConsole(page)
@@ -45,6 +45,6 @@ describe('web e2e: bare URL before CJK punctuation', () => {
     await compareOrRefreshGolden(join(SNAPSHOT_DIR, 'reply.expected.md'), prose, MODE)
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
-    await assertFixtureInventory(SNAPSHOT_DIR, ['session.v4.jsonl', 'reply.expected.md'])
+    await assertFixtureInventory(SNAPSHOT_DIR, ['session.v5.jsonl', 'reply.expected.md'])
   })
 })

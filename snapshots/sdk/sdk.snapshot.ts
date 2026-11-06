@@ -453,14 +453,30 @@ async function fixtureFiles(scenario: CorpusScenario): Promise<string[]> {
   }))
 }
 
-async function hydrateReplayFixtures(scenario: CorpusScenario, cwd: string): Promise<string[]> {
+interface HydratedReplayFixtures {
+  /** Hydrated Session logs, in role order. */
+  readonly fixtures: string[]
+  /** Hydrated stream sidecars aligned with `fixtures`; undefined when a role has none. */
+  readonly streams: (string | undefined)[]
+}
+
+async function hydrateReplayFixtures(scenario: CorpusScenario, cwd: string): Promise<HydratedReplayFixtures> {
   const root = join(cwd, '.replay-fixtures')
   await mkdir(root, { recursive: true })
-  return Promise.all((await fixtureFiles(scenario)).map(async (source) => {
+  const sources = await fixtureFiles(scenario)
+  const names = await sessionStreamFixtureNames(await readdir(scenario.dir), sources.map(file => basename(file)))
+  const fixtures = await Promise.all(sources.map(async (source) => {
     const destination = join(root, basename(source))
     await writeFile(destination, (await readFile(source, 'utf8')).replaceAll('{{cwd}}', cwd))
     return destination
   }))
+  const streams = await Promise.all(names.map(async (name) => {
+    if (name === undefined) return undefined
+    const destination = join(root, name)
+    await writeFile(destination, (await readFile(join(scenario.dir, name), 'utf8')).replaceAll('{{cwd}}', cwd))
+    return destination
+  }))
+  return { fixtures, streams }
 }
 
 /**
@@ -770,7 +786,9 @@ async function runScenario(scenario: CorpusScenario): Promise<{
   if (fixedWidthCwd) expect(JSON.stringify(cwd)).toHaveLength(192)
   const dshHome = join(cwd, '.dsh')
   const sessionsRoot = join(dshHome, 'sessions')
-  const replayFixtures = recording ? [] : await hydrateReplayFixtures(scenario, cwd)
+  const replay = recording ? { fixtures: [], streams: [] } : await hydrateReplayFixtures(scenario, cwd)
+  const replayFixtures = replay.fixtures
+  const replayStreamFiles = replay.streams
   const fixtureContents = await Promise.all((await fixtureFiles(scenario)).map(file => readFile(file, 'utf8')))
   const primaryFixture = fixtureContents[0]
   if (primaryFixture === undefined) throw new Error(`${scenario.name}: no primary session fixture`)
@@ -812,16 +830,13 @@ async function runScenario(scenario: CorpusScenario): Promise<{
   const resumeReplayFile = scenario.name === 'session-resume' && !recording
     ? join(patchRoot, 'resume-replay.json') : undefined
   // Role-parallel committed stream sidecars: replay serves each V5 session's
-  // exact Assistant streams from these files (an empty segment marks a role
-  // whose fixture still embeds its streams).
-  const committedStreamFiles = !recording && parentFixture !== undefined
-    ? await sessionStreamFixtureNames(await readdir(scenario.dir),
-      [basename(parentFixture), ...childFixtures.map(file => basename(file))])
-    : []
+  // exact Assistant streams from the hydrated copies (an empty segment marks a
+  // role whose fixture still embeds its streams).
+  const committedStreamFiles = replayStreamFiles
   const prepareTurnReplay = async (turn: number): Promise<void> => {
     if (resumeReplayFile === undefined || parentFixture === undefined) return
-    const streamFixture = committedStreamFiles[0] === undefined
-      ? undefined : await readFile(join(scenario.dir, committedStreamFiles[0]), 'utf8')
+    const streamFixture = replayStreamFiles[0] === undefined
+      ? undefined : await readFile(replayStreamFiles[0], 'utf8')
     const { events, readAssistantStream } = parseSessionFixtureWithStreams(
       await readFile(parentFixture, 'utf8'), streamFixture)
     const turnEvents = events.filter(event => 'turn' in event.data && event.data.turn === turn)
@@ -844,7 +859,7 @@ async function runScenario(scenario: CorpusScenario): Promise<{
       ...committedStreamFiles.some(name => name !== undefined)
         ? {
             DSH_SNAPSHOT_STREAM_FILES: committedStreamFiles
-              .map(name => name === undefined ? '' : join(scenario.dir, name)).join(delimiter),
+              .map(name => name ?? '').join(delimiter),
           }
         : {},
     },
@@ -1715,14 +1730,27 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       expect(actualSnapshots.map(records), `${scenario.name}: sessions`).toEqual(expectedSnapshots.map(records))
       if (!recording && !refreshing) {
         const committedStreamFiles = sessionStreamFixtureNames(await readdir(scenarioDir), files.map(file => basename(file)))
+        // A rerun regenerates volatile identities (job ids); fold the committed
+        // fixture's replacements into the sidecar view before comparing.
+        const replacements = refreshFixtureReplacements(ordered.map(log => ({
+          id: String(log.header.id),
+          createdAt: Number(log.header.createdAt),
+          ...typeof log.header.parentSession === 'string' ? { parentSession: log.header.parentSession } : {},
+          content: log.content,
+        })), expectedContents)
+        // Generated job ids reach tool-call arguments; a rerun issues fresh
+        // ones, so mask them before comparing the committed sidecar.
+        const maskJobIds = (text: string): string => text
+          .replace(/bash-[0-9a-f]{16}/gu, 'bash-{{job}}')
+          .replace(/goal-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gu, '{{goal}}')
         await Promise.all(committedStreamFiles.map(async (streamFile, index) => {
           if (streamFile === undefined) return
           const log = ordered[index]
           expect(log?.streams, `${streamFile}: run produced no Assistant-stream sidecar`).toBeDefined()
           expect(
-            renderAssistantStreamFixture(log!.streams!, actualContext),
+            maskJobIds(renderAssistantStreamFixture(log!.streams!, actualContext, replacements)),
             `${streamFile} mismatch`,
-          ).toBe(await readFile(join(scenarioDir, streamFile), 'utf8'))
+          ).toBe(maskJobIds(await readFile(join(scenarioDir, streamFile), 'utf8')))
         }))
       }
       await verifyHeaders(scenario, ordered, actualContext, assertions.dshSdkChild?.agentConfig)

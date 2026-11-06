@@ -68,9 +68,11 @@ import { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type {
   LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, RetryPolicyConfig, StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import type { ReplayHandle, ReplayProviderConfig } from '@deepseek-ai/dsh-llm-replay'
+import type { ReplayEntry, ReplayHandle, ReplayProviderConfig } from '@deepseek-ai/dsh-llm-replay'
 import {
+  deriveReplayScript,
   installLlmReplay,
+  parseSessionFixtureWithStreams,
   parseSessionLog,
   prepareSessionSnapshotFixtureForComparison,
 } from '@deepseek-ai/dsh-llm-replay'
@@ -1753,10 +1755,28 @@ export async function compareOrRefreshGolden(goldenPath: string, actual: string,
  * @param dir - the scenario snapshot directory.
  * @param expected - the exact expected file inventory.
  */
+/**
+ * Derive the replay script for one committed Session fixture, reading its
+ * stream sidecar when the fixture is current-generation.
+ * @param fixturePath - committed Session fixture path.
+ * @returns replay entries in settlement order.
+ */
+export async function deriveFixtureReplayScript(fixturePath: string): Promise<ReplayEntry[]> {
+  const contents = await readFile(fixturePath, 'utf8')
+  const directory = dirname(fixturePath)
+  const [streamName] = sessionStreamFixtureNames(await readdir(directory), [basename(fixturePath)])
+  const streamText = streamName === undefined ? undefined : await readFile(join(directory, streamName), 'utf8')
+  const { events, readAssistantStream } = parseSessionFixtureWithStreams(contents, streamText)
+  return deriveReplayScript(events, readAssistantStream)
+}
+
 export async function assertFixtureInventory(dir: string, expected: string[]): Promise<void> {
   const entries = (await readdir(dir)).sort()
   const ownsManifest = entries.includes('snapshot.yml')
-  const artifacts = entries.filter(name => name !== 'snapshot.yml')
+  const present = new Set(entries)
+  // A stream sidecar is an artifact of its Session fixture, not a separate entry.
+  const artifacts = entries.filter(name => name !== 'snapshot.yml'
+    && !(name.endsWith('.streams.jsonl') && present.has(name.slice(0, -'.streams.jsonl'.length) + '.jsonl')))
   const roleInventory = (names: readonly string[]): string[] => [...new Set(names.map((name) => {
     const fixture = parseSessionFixtureName(name)
     return fixture === undefined ? name : sessionFixtureName(fixture.index, 0)

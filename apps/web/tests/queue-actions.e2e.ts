@@ -3,17 +3,18 @@
 // so the page can edit and remove exact occurrences, then stop the active turn
 // while proving the preserved Queue advances in FIFO order.
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterEach, describe, expect, it, onTestFailed, vi } from 'vitest'
-import { deriveReplayScript, parseSessionLog, type ReplayEntry } from '@deepseek-ai/dsh-llm-replay'
+import type { ReplayEntry } from '@deepseek-ai/dsh-llm-replay'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import {
   assertFixtureInventory, captureExpandedTurnProcessAria, captureStableAria, compareOrRefreshGolden,
+  deriveFixtureReplayScript,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
 import { connectFreshWorkspace, expectTooltipOnTop, newEnglishPage, saveFailureShot } from './support.ts'
@@ -85,7 +86,7 @@ describe('web e2e: queue row actions', () => {
     overrideDir = await mkdtemp(join(tmpdir(), 'dsh-web-queue-actions-'))
     const readyFile = join(overrideDir, '.hang-ready')
     const overridePath = join(overrideDir, 'replay.override.json')
-    const recorded = deriveReplayScript(parseSessionLog(await readFile(FIXTURE, 'utf8')))
+    const recorded = await deriveFixtureReplayScript(FIXTURE)
     expect(recorded).toHaveLength(1)
     const replay: ReplayEntry[] = [
       { kind: 'hang', readyFile },
@@ -424,7 +425,7 @@ describe('web e2e: queue row actions', () => {
     const roundReady = join(overrideDir, '.round-ready')
     const humanReady = join(overrideDir, '.human-ready')
     const overridePath = join(overrideDir, 'replay.override.json')
-    const recorded = deriveReplayScript(parseSessionLog(await readFile(FIXTURE, 'utf8')))
+    const recorded = await deriveFixtureReplayScript(FIXTURE)
     await writeFile(overridePath, JSON.stringify([
       { kind: 'hang', readyFile: roundReady },
       { kind: 'hang', readyFile: humanReady },
