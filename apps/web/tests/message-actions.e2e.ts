@@ -46,11 +46,11 @@ function completedTailFixture(raw: string): string {
   if (stepTwoStart < 0) throw new Error('borrowed fixture has no step-two start')
   const kept = decoded.events.slice(0, stepTwoStart + 1).map((event) => {
     if (event.type !== 'assistant/message' || event.data.turn !== 1 || event.data.step !== 1) return event
-    const finish = event.data.stream.findIndex(record =>
-      record.type === 'chunk' && record.chunk.type === 'finish')
-    if (finish < 0) throw new Error('borrowed step-one Assistant message has no finish record')
-    const finishRecord = event.data.stream[finish]!
-    if (finishRecord.type !== 'chunk') throw new Error('borrowed step-one finish is not a chunk record')
+    // V5 moved the settled stream beside the log; migration derives the
+    // first-token scalar from it, so its presence proves the stream settled.
+    if (event.data.firstTokenTime === undefined) {
+      throw new Error('borrowed step-one Assistant message has no settlement timing')
+    }
     return {
       ...event,
       data: {

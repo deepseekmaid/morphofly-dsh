@@ -12,9 +12,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { unzipSync, strFromU8 } from 'fflate'
 import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { SessionEvent, SessionHeader, SessionId, ToolResultMessage, UserMessage } from '@deepseek-ai/dsh-session'
+import type {
+  AssistantMessage, SessionEvent, SessionHeader, SessionId, ToolResultMessage, UserMessage,
+} from '@deepseek-ai/dsh-session'
 import type { SessionLineageNode } from '@deepseek-ai/dsh-session-query'
 import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
+import type { AssistantStreamRecords } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionAccess, SessionHandle } from '@deepseek-ai/dsh-session-persistence'
 import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
 import type { BrowserAuth } from '@deepseek-ai/dsh-client-connection/src/browser-auth.ts'
@@ -24,6 +27,11 @@ declare module '@deepseek-ai/dsh-llm' {
   interface ContentBlockMap {
     'plugin:vendor': { type: 'plugin:vendor'; data: { content: readonly unknown[] }; content: readonly unknown[] }
   }
+}
+
+/** One partial declared-content row: attachment discovery reads only the declared field. */
+function declaredContentEvent(type: string, data: object): SessionEvent {
+  return structuredClone({ type, seq: SessionSeq(1), time: 1000, data }) as SessionEvent
 }
 
 const sid = (id: string): SessionId => id as SessionId
@@ -822,7 +830,7 @@ describe('session.export download endpoint', () => {
       ? { role: 'tool', toolCallId: 'declared-call', source: { kind: 'tool', callId: 'declared-call' }, content }
       : { content }
     const data = field === 'message' ? { message } : { [field]: content }
-    const stored = log('session-root', undefined, [{ type, seq: SessionSeq(1), time: 1000, data } as SessionEvent])
+    const stored = log('session-root', undefined, [declaredContentEvent(type, data)])
     const api = await buildApi({ 'session-root': stored })
     const response = await toFetchHandler(api).fetch(new Request('http://host/api/session.export?sessionId=session-root'))
     const files = unzipSync(await responseBytes(response))
@@ -923,20 +931,23 @@ describe('session.export download endpoint', () => {
   })
 
   it('packages V5 settlement sidecars beside the exported log', async () => {
-    const stream = [{ type: 'text-chunks', time0: 10, index: 0, dt: [1], texts: ['hi'] }]
-    const settlement = {
+    const stream: AssistantStreamRecords = [{ type: 'text-chunks', time0: 10, index: 0, dt: [1], texts: ['hi'] }]
+    const settlement: SessionEvent<'assistant/message'> = {
       type: 'assistant/message', seq: SessionSeq(1), time: 2000, surfaceOp: 'append',
       data: {
         turn: 1, step: 1, firstTokenTime: 5,
-        message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+        message: {
+          id: 'settlement-message' as AssistantMessage['id'],
+          role: 'assistant',
+          content: [{ type: 'text', text: 'hi' }],
+          source: { kind: 'model', provider: 'mock', model: 'mock' },
+        },
       },
-    } as unknown as SessionEvent
+    }
     const stored = log('session-root', undefined, [turnStart, settlement])
     const api = await buildApi({ 'session-root': stored }, [], {
       open: async () => {
-        const handle = readHandle(stored) as SessionHandle & {
-          readAssistantStream(seq: number): Promise<readonly unknown[] | undefined>
-        }
+        const handle = readHandle(stored)
         handle.readAssistantStream = async seq => (seq === 1 ? stream : undefined)
         return handle
       },

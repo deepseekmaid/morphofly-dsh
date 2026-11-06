@@ -7,7 +7,8 @@
  * instead of the V5 successor the current writer would produce.
  */
 
-import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
+import { KNOWN_SESSION_EVENT_TYPES, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import {
   createSessionFormatCatalog,
   type SessionFormatArtifact,
@@ -88,4 +89,50 @@ export function restoreV4AsCurrent(artifact: SessionFormatArtifact): SessionForm
   const reader = currentFormatCatalog.createRestore(physical, { recovery: 'strict', validation: 'current' })
   for (const event of artifact.events) reader.decodeRow(releasedV4SessionFormatCodec.encodeEvent(event))
   return reader.finish()
+}
+
+/** Current-generation Session inputs adopted from one released V4 artifact. */
+export interface CurrentV4SessionInputs {
+  /** Current logical header. */
+  readonly header: SessionHeader
+  /** Current logical events. */
+  readonly events: readonly SessionEvent[]
+  /** Exact fork-inherited prefix length. */
+  readonly inheritedEventCount: number
+}
+
+/**
+ * Adopt one released V4 artifact as the current generation with typed restore inputs.
+ *
+ * The current catalog already re-read and validated the V4 rows; this narrows
+ * the format values through field checks instead of asserting their types, and
+ * `Session.fromRestore` validates the header again at adoption.
+ * @param artifact - complete validated V4 artifact.
+ * @returns the current header, events, and inherited cut.
+ * @throws when the restored header omits a required current Session field.
+ */
+export function restoreV4AsCurrentSessionInputs(artifact: SessionFormatArtifact): CurrentV4SessionInputs {
+  const current = restoreV4AsCurrent(artifact)
+  const header = current.header
+  if (header.version !== SESSION_FORMAT_VERSION) {
+    throw new Error(`restored V4 artifact header version is ${String(header.version)}, expected ${SESSION_FORMAT_VERSION}`)
+  }
+  if (typeof header.id !== 'string' || typeof header.createdAt !== 'number' || typeof header.isSeeded !== 'boolean') {
+    throw new Error('restored V4 artifact header is missing a required current Session field')
+  }
+  return {
+    header: {
+      version: header.version,
+      id: SessionId(header.id),
+      createdAt: header.createdAt,
+      isSeeded: header.isSeeded,
+      ...header.cwd === undefined ? {} : { cwd: header.cwd },
+      ...header.parentSession === undefined ? {} : { parentSession: SessionId(header.parentSession) },
+      ...header.origin === undefined ? {} : { origin: header.origin },
+      ...header.agentPreset === undefined ? {} : { agentPreset: header.agentPreset },
+      delegationDepth: header.delegationDepth,
+    },
+    events: current.events as readonly SessionEvent[],
+    inheritedEventCount: current.inheritedEventCount,
+  }
 }

@@ -175,6 +175,14 @@ describe('completed tool-call arguments through the public runtime', () => {
       isConcurrencySafe: () => true,
       async execute() { executions++; return [{ type: 'text', text: 'counted' }] },
     })))
+    // V5 keeps an attempt's partial stream out of the event log: the writer
+    // claims it during the synchronous session/event dispatch.
+    const claimed: string[] = []
+    ctx.on('session/event', (session, event) => {
+      if (event.type !== 'assistant/attempt') return
+      const stream = session.takeAssistantStream(event.seq)
+      if (stream !== undefined) claimed.push(JSON.stringify(stream))
+    })
     const agent = await loop.create(SessionId('malformed-parallel'), { provider: 'fixture', model: 'm' })
     const idle = new Promise<void>((resolve) => {
       const dispose = ctx.on('agent/status', ({ agent: subject, status }) => {
@@ -188,9 +196,9 @@ describe('completed tool-call arguments through the public runtime', () => {
     expect(events.filter(event => event.type === 'tool/call' || event.type === 'tool/result' || event.type === 'assistant/message')).toEqual([])
     const attempts = events.filter(event => event.type === 'assistant/attempt')
     expect(attempts).toHaveLength(1)
-    expect(JSON.stringify(attempts)).toContain('call_valid|item_valid')
-    expect(JSON.stringify(attempts)).toContain('MALFORMED_RESPONSE')
-    expect(JSON.stringify(attempts)).not.toContain('replayState')
+    expect(claimed.join('\n')).toContain('call_valid|item_valid')
+    expect(claimed.join('\n')).toContain('MALFORMED_RESPONSE')
+    expect(claimed.join('\n')).not.toContain('replayState')
     expect(events.find(event => event.type === 'turn/end')).toMatchObject({
       data: { reason: { kind: 'error', error: { code: 'MALFORMED_RESPONSE' } } },
     })

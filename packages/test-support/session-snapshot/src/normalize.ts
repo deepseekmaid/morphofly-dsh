@@ -631,7 +631,7 @@ export function normalizeAssistantStreamFixture(raw: string, ctx: NormalizeConte
   return `${lines.map((line) => {
     let value: unknown
     try {
-      value = JSON.parse(line) as unknown
+      value = JSON.parse(line)
     } catch (error) {
       throw new Error('assistant-stream fixture line contains invalid JSON', { cause: error })
     }

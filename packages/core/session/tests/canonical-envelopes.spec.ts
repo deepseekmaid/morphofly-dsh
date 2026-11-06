@@ -46,6 +46,11 @@ function appendEvent(session: Session, event: SessionEvent) {
   })
 }
 
+/** Treat one deliberately invalid envelope as the event an acceptance path must reject. */
+function invalidEvent(event: object): SessionEvent {
+  return structuredClone(event) as SessionEvent
+}
+
 const entryPaths: Record<string, (event: SessionEvent) => unknown> = {
   append: (event: SessionEvent) => appendEvent(Session.create(id), event),
   seed: (event: SessionEvent) => Session.create(id, [event]),
@@ -274,12 +279,12 @@ describe('canonical event-local surface metadata', () => {
         .toThrow(/not surface-eligible/)
       expect(() => accept({ type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 }, sourceEventSeqs: [0] } as never))
         .toThrow(/not surface-eligible/)
-      const assistant = {
+      const assistant = invalidEvent({
         ...userEvent(), type: 'assistant/message', sourceEventSeqs: [0],
         data: { turn: 1, step: 1,  message: createMessage({
           role: 'assistant', content: [], source: { kind: 'model', provider: 'mock', model: 'mock' },
         }) },
-      } as unknown as SessionEvent
+      })
       expect(() => accept(assistant)).toThrow(/cannot carry sourceEventSeqs/)
     })
   }
@@ -301,9 +306,9 @@ describe('canonical event-local surface metadata', () => {
 
   it.each(['turn/start', 'assistant/attempt', 'request/context', 'session/title', 'tool/ptc-dispatch'])('rejects known log-only %s metadata even when ignorable', (type) => {
     for (const metadata of [{ surfaceOp: 'append' }, { sourceEventSeqs: [0] }]) {
-      const event = {
+      const event = invalidEvent({
         type, seq: SessionSeq(0), time: 1, data: { turn: 1, step: 1 }, ignorable: true, ...metadata,
-      } as unknown as SessionEvent
+      })
       for (const accept of Object.values(entryPaths)) expect(() => accept(event)).toThrow(/not surface-eligible/)
     }
   })

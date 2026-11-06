@@ -2,9 +2,8 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { AssistantStreamAccumulator } from '@deepseek-ai/dsh-llm/assistant-stream'
 import { MessageId, ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionEventMap, SessionEventType, SessionHeader } from '@deepseek-ai/dsh-session'
 import {
@@ -27,8 +26,6 @@ const SESSIONS_PER_PROJECT = 19
 const CHILD_EVERY = 6
 /** Turn-one system prompt size; the measured median largest event is 21.9 KB. */
 const SYSTEM_PROMPT_CHARS = 20_000
-/** Characters per streamed text or reasoning delta; the measured mean is 3.9. */
-const DELTA_CHARS = 4
 /** Share of remaining payload characters by message slot. */
 const PAYLOAD_SHARE = { user: 0.1, reasoning: 0.2, text: 0.25, toolResult: 0.45 } as const
 /** Distinct words in the synthetic vocabulary and total words in the shared text pool. */
@@ -148,25 +145,6 @@ function planPayload(shape: SessionShape, toolSteps: number, payloadChars: numbe
   }
 }
 
-function streamChunks(content: readonly ContentBlock[], finish: 'stop' | 'tool-calls'): StreamChunk[] {
-  const chunks: StreamChunk[] = []
-  content.forEach((block, index) => {
-    chunks.push({ type: 'block-start', index, blockType: block.type })
-    if (block.type === 'text' || block.type === 'reasoning') {
-      const type = block.type === 'text' ? 'text-delta' : 'reasoning-delta'
-      for (let offset = 0; offset < block.text.length; offset += DELTA_CHARS) {
-        chunks.push({ type, index, text: block.text.slice(offset, offset + DELTA_CHARS) })
-      }
-    } else if (block.type === 'tool-call') {
-      chunks.push({ type: 'tool-call-delta', index, id: block.id, name: block.name, argumentsDelta: block.arguments })
-    }
-    chunks.push({ type: 'block-end', index, block })
-  })
-  chunks.push({ type: 'usage', usage: { inputTokens: 20_000, outputTokens: 500 } })
-  chunks.push({ type: 'finish', reason: { kind: finish } })
-  return chunks
-}
-
 /** Raw log builder emitting the fields `Session.append` records, without its per-append validation. */
 class RawLog {
   readonly events: SessionEvent[] = []
@@ -233,11 +211,6 @@ function authorEvents(
           arguments: JSON.stringify({ path: `src/module-${String(turn)}-${String(step)}.ts` }),
         }],
       ]
-      const stream = new AssistantStreamAccumulator()
-      const time = TIME_ZERO + log.seq * 1_000
-      for (const [index, chunk] of streamChunks(content, callId === undefined ? 'stop' : 'tool-calls').entries()) {
-        stream.push({ time: time + index, chunk })
-      }
       log.flush()
       log.append('assistant/message', {
         turn, step,
@@ -245,7 +218,8 @@ function authorEvents(
           id: MessageId(`reply-${String(turn)}-${String(step)}`), role: 'assistant', content,
           source: { kind: 'model', provider: 'bench', model: 'bench' },
         },
-        stream: [...stream.snapshot()],
+        // V5 keeps the stream beside the log; only scalars enter the settlement.
+        firstTokenTime: TIME_ZERO + log.seq * 1_000,
       }, { surfaceOp: 'append' })
       if (callId !== undefined) {
         log.flush()

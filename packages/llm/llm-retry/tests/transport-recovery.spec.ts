@@ -1,4 +1,5 @@
 import { createUserMessage, expandAssistantStream } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -142,6 +143,15 @@ describe('bounded retry through the real DeepSeek HTTP/SSE adapter', () => {
       model: 'mock-model',
     })
 
+    // V5 keeps a failed attempt's partial stream out of the event log: the
+    // writer claims it during the synchronous session/event dispatch.
+    const failedStreams: (readonly AssistantStreamRecord[])[] = []
+    context.on('session/event', (session, event) => {
+      if (session !== agent.session || event.type !== 'assistant/attempt') return
+      const stream = session.takeAssistantStream(event.seq)
+      if (stream !== undefined) failedStreams.push(stream)
+    })
+
     await sendAndWait(context, agent)
 
     expect(server.requests).toHaveLength(2)
@@ -153,7 +163,7 @@ describe('bounded retry through the real DeepSeek HTTP/SSE adapter', () => {
       && event.seq < retryEvent.seq,
     )
     expect(failedAttempts).toHaveLength(1)
-    expect(expandAssistantStream(failedAttempts[0]!.data.stream)).toHaveLength(failedChunkCount)
+    expect(failedStreams.map(stream => expandAssistantStream(stream).length)).toEqual([failedChunkCount])
     expect(agent.session.snapshotEvents().filter(event => event.type === 'assistant/message')
       .map(event => [event.data.turn, event.data.step]))
       .toEqual([[1, 1]])
@@ -201,11 +211,19 @@ describe('bounded retry through the real DeepSeek HTTP/SSE adapter', () => {
       model: 'mock-model',
     })
 
+    const failedStreams: (readonly AssistantStreamRecord[])[] = []
+    context.on('session/event', (session, event) => {
+      if (session !== agent.session || event.type !== 'assistant/attempt') return
+      const stream = session.takeAssistantStream(event.seq)
+      if (stream !== undefined) failedStreams.push(stream)
+    })
+
     await sendAndWait(context, agent)
 
     expect(server.requests).toHaveLength(1)
     const attempt = agent.session.snapshotEvents().find(event => event.type === 'assistant/attempt' && event.data.turn === 1)
-    expect(attempt?.type === 'assistant/attempt' ? expandAssistantStream(attempt.data.stream) : []).toHaveLength(3)
+    expect(attempt).toBeDefined()
+    expect(failedStreams.map(stream => expandAssistantStream(stream).length)).toEqual([3])
     expect(agent.session.snapshotEvents().some(event => event.type === 'assistant/message')).toBe(false)
     expect(agent.session.snapshotEvents().some(event => event.type === 'llm/retry')).toBe(false)
     expect(agent.session.snapshotEvents().at(-1)).toMatchObject({

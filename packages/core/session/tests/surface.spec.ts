@@ -79,6 +79,11 @@ function surfaceSession(): Session {
   return s
 }
 
+/** Treat one deliberately invalid event as the surface fold input it must reject. */
+function invalidEvent(event: object): SessionEvent {
+  return structuredClone(event) as SessionEvent
+}
+
 function sourceEventReferenceEvent(seq: SessionSeq, sourceEventSeqs: unknown): SessionEvent {
   return {
     type: 'user/message',
@@ -141,7 +146,7 @@ describe('foldSurface source-event references', () => {
   })
 
   it('rejects cited source events on an assistant message', () => {
-    const event = {
+    const event = invalidEvent({
       type: 'assistant/message',
       seq: SessionSeq(0),
       time: 0,
@@ -159,7 +164,7 @@ describe('foldSurface source-event references', () => {
       },
       surfaceOp: 'append',
       sourceEventSeqs: [],
-    } as unknown as SessionEvent
+    })
     expect(() => foldSurface([event])).toThrow(/cannot carry sourceEventSeqs/)
   })
 

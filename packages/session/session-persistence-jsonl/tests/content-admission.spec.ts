@@ -4,7 +4,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import { assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
-import type { SessionFormatJsonObject } from '@deepseek-ai/dsh-session-format'
+import type { SessionFormatJsonObject, SessionFormatJsonValue } from '@deepseek-ai/dsh-session-format'
 import { SessionFormatUnsupportedError } from '@deepseek-ai/dsh-session-persistence'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
@@ -140,7 +140,13 @@ function line(value: unknown): string {
   return JSON.stringify(value) + '\n'
 }
 
-/** The V5 settlement payload a historical embedded stream migrates to. */
+/** Whether one admitted JSON value is a JSON object rather than a primitive or array. */
+function isJsonObject(
+  value: SessionFormatJsonObject | readonly SessionFormatJsonValue[] | null | boolean | number | string | undefined,
+): value is SessionFormatJsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function migratedSettlement(type: string, data: SessionFormatJsonObject): SessionFormatJsonObject {
   if (type !== 'assistant/message' && type !== 'assistant/attempt') return data
   const { stream: _stream, ...rest } = data
@@ -229,8 +235,12 @@ describe.each(['none', 'zstd'] as const)('V2 admitted content publication (%s)',
     expect(restored.events.at(-1)).toMatchObject({
       type: carrier.targetType ?? tail['type'], seq: rows.length,
     })
+    const tailData = tail['data']
+    if (!isJsonObject(tailData)) {
+      throw new Error(`content-admission carrier "${carrier.name}" has no object data`)
+    }
     expect(restored.events.at(-1)?.data)
-      .toEqual(carrier.targetData ?? migratedSettlement(tail['type'], tail['data']))
+      .toEqual(carrier.targetData ?? migratedSettlement(tail['type'], tailData))
     expect(await observe(path)).toEqual(original)
     await expectOnlyGenerations([path])
 

@@ -5,6 +5,7 @@ import type { Fiber } from '@deepseek-ai/cordis'
 import LlmRuntime, { createUserMessage, ToolCallId, EMPTY_RESPONSE_CODE, LlmAdapter, LlmError, expandAssistantStream, resolveRetryPolicy  } from '@deepseek-ai/dsh-llm'
 import type {
   AlwaysRetryPolicyConfig,
+  AssistantStreamRecord,
   BackoffConfig,
   GenerateOptions,
   NormalRetryPolicyConfig,
@@ -294,7 +295,15 @@ describe('provider-routed retry policy', () => {
       partialToolFailure(new LlmError('stream interrupted', 'TRANSPORT')),
       textResponse('recovered'),
     ])
-    ;({ ctx: context } = await harness(adapter))
+    // V5 keeps a failed attempt's partial stream out of the event log: the
+    // writer claims it during the synchronous session/event dispatch.
+    const failedStreams: (readonly AssistantStreamRecord[] | undefined)[] = []
+    ;({ ctx: context } = await harness(adapter, undefined, (ctx) => {
+      ctx.on('session/event', (session, event) => {
+        if (event.type !== 'assistant/attempt') return
+        failedStreams.push(session.takeAssistantStream(event.seq))
+      })
+    }))
     let toolExecutions = 0
     context.tools.register(defineContentToolFixture({
       name: 'danger',
@@ -321,7 +330,8 @@ describe('provider-routed retry policy', () => {
       && event.seq < retryEvent.seq,
     )
     expect(failedAttempts).toHaveLength(1)
-    expect(expandAssistantStream(failedAttempts[0]!.data.stream)).toHaveLength(7)
+    expect(failedStreams).toHaveLength(1)
+    expect(expandAssistantStream(failedStreams[0]!)).toHaveLength(7)
     const assistantMessages = agent.session.snapshotEvents().filter(event => event.type === 'assistant/message')
     expect(assistantMessages.map(event => ({
       turn: event.data.turn,

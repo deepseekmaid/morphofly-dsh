@@ -146,7 +146,11 @@ export function parseAssistantStreamFixture(
   return streams
 }
 
-/** Render committed Assistant-stream fixture text in settlement-seq order. */
+/**
+ * Render committed Assistant-stream fixture text in settlement-seq order.
+ * @param entries - settlement-keyed stream records to render.
+ * @returns fixture text with one JSON object per settlement, ordered by sequence.
+ */
 export function formatAssistantStreamFixture(
   entries: Iterable<AssistantStreamFixtureEntry>,
 ): string {
@@ -388,7 +392,7 @@ function parseSessionFixture(text: string): ParsedSessionFixture {
     if (line.trim().length === 0) continue
     let value: unknown
     try {
-      value = JSON.parse(line) as unknown
+      value = JSON.parse(line)
     } catch (error) {
       throw new Error(`session snapshot line ${index + 1} contains invalid JSON`, { cause: error })
     }
@@ -485,9 +489,10 @@ function releasedStreams(
   restore: ReturnType<typeof historicalSessionFormatCatalog.createRestore> | undefined,
 ): ReadonlyMap<number, readonly AssistantStreamRecord[]> | undefined {
   if (restore === undefined) return undefined
-  let events: readonly { type: string; seq: number; data?: unknown }[]
+  interface ReleasedSettlementEvent { type: string; seq: number; data?: Record<string, unknown> }
+  let events: readonly ReleasedSettlementEvent[]
   try {
-    events = restore.finish().events as unknown as readonly { type: string; seq: number; data?: unknown }[]
+    events = restore.finish().events as readonly ReleasedSettlementEvent[]
   } catch {
     return undefined
   }

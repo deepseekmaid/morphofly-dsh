@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { lastAssistantStreamChunk, type RetryPolicyConfig, type TokenUsage } from '@deepseek-ai/dsh-llm'
+import type { RetryPolicyConfig, TokenUsage } from '@deepseek-ai/dsh-llm'
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { describe, expect, it, onTestFinished } from 'vitest'
@@ -102,11 +102,11 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('SDK native tool updates with rea
     const run = async (prompt: string) => {
       const result = await session.run(prompt)
       events.push(...result.events)
-      const failures = result.events.filter(event => event.type === 'assistant/attempt').map(event => ({
-        turn: event.data.turn,
-        step: event.data.step,
-        reason: lastAssistantStreamChunk(event.data.stream, 'finish')?.reason,
-      }))
+      // V5 moves the exact attempt stream into the Session sidecar, which the
+      // SDK wire does not carry; the settlement identity is the failure signal.
+      const failures = result.events
+        .filter((event): event is SessionEvent<'assistant/attempt'> => event.type === 'assistant/attempt')
+        .map(event => ({ turn: event.data.turn, step: event.data.step }))
       expect(failures, `Provider request failures: ${JSON.stringify(failures)}`).toEqual([])
       return result.finalResponse
     }

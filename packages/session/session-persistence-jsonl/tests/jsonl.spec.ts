@@ -2460,7 +2460,16 @@ describe('JsonlSessionPersistence: Assistant stream sidecars', () => {
     ]
   }
 
-  /** A released historical one-turn log whose message still embeds the stream. */
+  /** The stream a released historical settlement embeds in its row. */
+  const historicalStream = [
+    {
+      type: 'text-chunks', time0: 3, index: 0,
+      dt: [1, 1, 1, 1], texts: ['t0', 't1', 't2', 't3', 't4'],
+    },
+    { type: 'chunk', time: 8, chunk: { type: 'finish', reason: { kind: 'stop' } } },
+  ]
+
+  /** A current-shaped one-turn log; the historical source row re-adds its embedded stream. */
   function chunkRunLog(): SessionEvent[] {
     return [
       { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } },
@@ -2475,13 +2484,7 @@ describe('JsonlSessionPersistence: Assistant stream sidecars', () => {
             ...{ provider: 'mock', model: 'mock' },
           },
         }),
-        stream: [
-          {
-            type: 'text-chunks', time0: 3, index: 0,
-            dt: [1, 1, 1, 1], texts: ['t0', 't1', 't2', 't3', 't4'],
-          },
-          { type: 'chunk', time: 8, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-        ],
+        firstTokenTime: 3,
       }, surfaceOp: 'append' },
       { type: 'step/end', seq: SessionSeq(3), time: 9, data: { turn: 1, step: 1 } },
       { type: 'turn/end', seq: SessionSeq(4), time: 10, data: { turn: 1, reason: { kind: 'completed' } } },
@@ -2525,15 +2528,21 @@ describe('JsonlSessionPersistence: Assistant stream sidecars', () => {
 
   it.each([2, 3])('reads v%s rows and appends a current turn without changing predecessor bytes', async (version) => {
     const m = meta('mixed', '/work')
-    const log = chunkRunLog() // historical: the settlement still embeds its stream
+    const log = chunkRunLog()
     const sourcePath = generationLogPath(root, '/work', m.id, version, 'none')
     const currentPath = rawLogPath(root, '/work', m.id)
+    // The released generation embeds the settlement stream in its row and has no scalar.
+    const historicalRows = log.map((event, index) => {
+      if (index !== 2 || event.type !== 'assistant/message') return event
+      const { firstTokenTime: _firstTokenTime, ...data } = event.data
+      return { ...event, data: { ...data, stream: historicalStream } }
+    })
     const source = Buffer.from([
       JSON.stringify({
         type: 'session', version, id: 'mixed', createdAt: 1000,
         cwd: '/work', isSeeded: false, delegationDepth: 0,
       }),
-      ...log.map(e => JSON.stringify(e)),
+      ...historicalRows.map(e => JSON.stringify(e)),
     ].join('\n') + '\n')
     await mkdir(dirname(sourcePath), { recursive: true })
     await writeFile(sourcePath, source)

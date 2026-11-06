@@ -1,28 +1,34 @@
 import { describe, expect, it } from 'vitest'
+import { createAssistantMessage, createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { AssistantOutputFold, finalAssistantOutput } from '../src/assistant-output.ts'
 
-function message(content: ContentBlock[]): SessionEvent {
-  return { type: 'assistant/message', data: { message: { content } } } as unknown as SessionEvent
-}
-
-function discardedAttempt(): SessionEvent {
-  return { type: 'assistant/attempt', data: { turn: 1, step: 1 } } as unknown as SessionEvent
-}
-
-function toolResult(text: string): SessionEvent {
+function message(content: ContentBlock[]): SessionEvent<'assistant/message'> {
   return {
-    type: 'tool/result',
+    type: 'assistant/message', seq: SessionSeq(0), time: 0, surfaceOp: 'append',
     data: {
-      message: {
-        role: 'tool',
-        toolCallId: 'call-1',
-        content: [{ type: 'text', text }],
-        isError: false,
-      },
+      turn: 1, step: 1,
+      message: createAssistantMessage({ content, source: { provider: 'test', model: 'test' } }),
     },
-  } as unknown as SessionEvent
+  }
+}
+
+function discardedAttempt(): SessionEvent<'assistant/attempt'> {
+  return { type: 'assistant/attempt', seq: SessionSeq(0), time: 0, data: { turn: 1, step: 1 } }
+}
+
+function toolResult(text: string): SessionEvent<'tool/result'> {
+  return {
+    type: 'tool/result', seq: SessionSeq(0), time: 0, surfaceOp: 'append',
+    data: {
+      turn: 1, step: 1,
+      message: createToolResultMessage({
+        callId: ToolCallId('call-1'), isError: false, content: [{ type: 'text', text }],
+      }),
+    },
+  }
 }
 
 describe('finalAssistantOutput', () => {

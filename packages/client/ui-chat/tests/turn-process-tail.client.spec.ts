@@ -1,7 +1,6 @@
 /** Turn-node Locations and Assistant timing across partial windows and transient retirement. */
 import { describe, expect, it } from 'vitest'
 import { createAssistantMessage, createToolResultMessage, LlmAttemptId, ToolCallId } from '@deepseek-ai/dsh-llm'
-import { AssistantStreamAccumulator } from '@deepseek-ai/dsh-llm/assistant-stream'
 import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type {
   SessionAssistantSettlementEntry, SessionEventLikeEntry, SessionLiveEventEntry, SessionTransientEventEntry,
@@ -35,12 +34,6 @@ const deltas: SessionTransientEventEntry[] = ['', toolBlock.arguments].map((argu
   },
 }))
 
-function stream() {
-  const accumulator = new AssistantStreamAccumulator()
-  for (const { event } of deltas) accumulator.push({ time: event.time, chunk: event.data.chunk })
-  return [...accumulator.snapshot()]
-}
-
 function harness(entries: readonly SessionEventLikeEntry[], hasMore = true) {
   const assembler = new ConversationNodeAssembler(
     { entries: () => [assistantDefinition, turnProcessDefinition, turnTailDefinition], fallbackEntry: () => undefined },
@@ -60,7 +53,7 @@ describe('Turn nodes in partial windows', () => {
     const value = harness(deltas)
     const committed: SessionAssistantSettlementEntry = { type: 'event', event: {
       type: 'assistant/message', seq: SessionSeq(3), time: 3_000, surfaceOp: 'append', data: {
-        turn: 1, step: 1, stream: stream(),
+        turn: 1, step: 1, firstTokenTime: 2_200,
         message: createAssistantMessage({ source: { provider: 'test', model: 'test' }, content: [toolBlock] }),
       },
     } }
@@ -120,7 +113,7 @@ describe('Turn nodes in partial windows', () => {
     expect(before.timeline.turns.get(1)?.steps[0]?.data.get('assistant-step'))
       .toMatchObject({ status: 'interrupted', blocks: [{ kind: 'tool-call', callId, name: 'write' }] })
     const committed: SessionAssistantSettlementEntry | undefined = kind === 'attempt' ? { type: 'event', event: {
-      type: 'assistant/attempt', seq: SessionSeq(3), time: 3_000, data: { turn: 1, step: 1, stream: stream() },
+      type: 'assistant/attempt', seq: SessionSeq(3), time: 3_000, data: { turn: 1, step: 1, firstTokenTime: 2_200 },
     } } : undefined
     value.assembler.settleAssistant(attemptId, committed)
     const after = value.read()

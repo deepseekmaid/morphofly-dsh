@@ -2,7 +2,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AssistantStreamAccumulator, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { AssistantStreamAccumulator, ToolCallId, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
@@ -66,24 +66,40 @@ describe('Assistant-stream fixture names', () => {
 describe('renderAssistantStreamFixture', () => {
   it('zeroes replay clocks while tokenizing the run cwd and keeping opaque values', () => {
     const cwd = join(dir, 'workspace')
+    const callId = ToolCallId('call-83e90500-8c2c-4361-8e9a-8d6dcca151fd')
+    const callArguments = '{"path":"notes.txt"}'
     const stream = records([
       { type: 'block-start', index: 0, blockType: 'reasoning' },
       {
         type: 'block-end',
         index: 0,
-        block: { type: 'reasoning', text: `read ${cwd}`, signature: '83e90500-8c2c-4361-8e9a-8d6dcca151fd' },
+        block: { type: 'reasoning', text: `read ${cwd}` },
       },
+      { type: 'block-start', index: 1, blockType: 'tool-call' },
+      {
+        type: 'tool-call-delta',
+        index: 1,
+        id: callId,
+        name: 'read',
+        argumentsDelta: callArguments,
+      },
+      { type: 'block-end', index: 1, block: { type: 'tool-call', id: callId, name: 'read', arguments: callArguments } },
       { type: 'finish', reason: { kind: 'stop' } },
     ])
     const rendered = renderAssistantStreamFixture(new Map([[7, stream]]), { sessionIds: [], cwd })
-    type FixtureMember = { time?: number; time0?: number; chunk?: { block?: { text?: string; signature?: string } } }
+    type FixtureBlock = { text?: string; id?: string; arguments?: string }
+    type FixtureMember = { time?: number; time0?: number; chunk?: { block?: FixtureBlock } }
     const line = JSON.parse(rendered.trimEnd()) as { seq: number; stream: FixtureMember[] }
     expect(line.seq).toBe(7)
     expect(line.stream.every(member => member.time === undefined || member.time === 0)).toBe(true)
     expect(line.stream.every(member => member.time0 === undefined || member.time0 === 0)).toBe(true)
-    const block = line.stream.map(member => member.chunk?.block).find(value => value?.signature !== undefined)
-    expect(block?.text).toBe('read {{cwd}}')
-    expect(block?.signature).toBe('83e90500-8c2c-4361-8e9a-8d6dcca151fd')
+    const blocks = line.stream.flatMap(member => member.chunk?.block === undefined ? [] : [member.chunk.block])
+    expect(blocks.find(block => block.text !== undefined)?.text).toBe('read {{cwd}}')
+    expect(blocks.find(block => block.arguments !== undefined)).toMatchObject({
+      id: callId,
+      name: 'read',
+      arguments: callArguments,
+    })
     expect(rendered.endsWith('\n')).toBe(true)
   })
 

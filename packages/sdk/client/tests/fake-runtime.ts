@@ -99,26 +99,6 @@ function assistantText(): string {
   return parts.join('\n')
 }
 
-function textStream(text: string): object[] {
-  return [
-    { type: 'chunk', time: 0, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-    { type: 'text-chunks', time0: 0, index: 0, dt: [], texts: [text] },
-    { type: 'chunk', time: 0, chunk: { type: 'block-end', index: 0, block: { type: 'text', text } } },
-    { type: 'chunk', time: 0, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-  ]
-}
-
-function usageOnlyStream(): object[] {
-  return [
-    {
-      type: 'chunk',
-      time: 0,
-      chunk: { type: 'usage', usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 } },
-    },
-    { type: 'chunk', time: 0, chunk: { type: 'finish', reason: { kind: 'max-tokens' } } },
-  ]
-}
-
 function runTurn(sessionId: string): void {
   const text = assistantText()
   if (env.FAKE_MALFORMED_EVENT !== undefined) {
@@ -130,7 +110,6 @@ function runTurn(sessionId: string): void {
     event(sessionId, 'assistant/attempt', {
       turn: 0,
       step: 0,
-      stream: textStream(text),
     })
     event(sessionId, 'assistant/message', {
       turn: 0,
@@ -141,7 +120,6 @@ function runTurn(sessionId: string): void {
         content: 'not-an-array',
         source: { kind: 'model', provider: 'fake', model: 'fake' },
       },
-      stream: textStream(text),
     })
     return
   }
@@ -153,7 +131,6 @@ function runTurn(sessionId: string): void {
     event(sessionId, 'assistant/attempt', {
       turn: 0,
       step: 0,
-      stream: textStream(text),
     })
   }
   event(sessionId, 'assistant/message', {
@@ -167,7 +144,6 @@ function runTurn(sessionId: string): void {
       content: env.FAKE_EMPTY_MESSAGE !== undefined ? [] : [{ type: 'text', text }],
       source: { kind: 'model', provider: 'fake', model: 'fake' },
     },
-    stream: env.FAKE_EMPTY_MESSAGE !== undefined ? usageOnlyStream() : textStream(text),
   })
   if (env.FAKE_SESSION_EVENT !== undefined) {
     const scripted: unknown = JSON.parse(env.FAKE_SESSION_EVENT)
@@ -223,7 +199,6 @@ function runTurn(sessionId: string): void {
         content: [{ type: 'text', text: 'child says hi' }],
         source: { kind: 'model', provider: 'fake', model: 'fake' },
       },
-      stream: textStream('child says hi'),
     })
     notify('subagent.finished', {
       provider: 'spawn',
@@ -350,7 +325,6 @@ reader.on('line', (line) => {
         event(sessionId, 'assistant/attempt', {
           turn: 0,
           step: 0,
-          stream: textStream('streamed then cut short'),
         })
         respond({})
         return
@@ -367,7 +341,6 @@ reader.on('line', (line) => {
             content: [{ type: 'text', text: partial }],
             source: { kind: 'model', provider: 'fake', model: 'fake' },
           },
-          stream: textStream(partial),
           interrupted: true,
         })
         setImmediate(() => { process.exit(17) })

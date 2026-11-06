@@ -12,7 +12,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import { inspectSystemPrompt } from '../../ui-conversation/src/client/contract/system-prompt.ts'
-import { AssistantStreamAccumulator } from '@deepseek-ai/dsh-llm/assistant-stream'
+import { AssistantStreamAccumulator, assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm/assistant-stream'
 import { LlmAttemptId, ToolCallId } from '@deepseek-ai/dsh-llm/brand'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { hasAssistantReplyContent } from '../src/client/contract/assistant-content.ts'
@@ -76,18 +76,15 @@ function at(
   data: unknown,
   extra: Record<string, unknown> = {},
 ): SessionLiveEventEntry {
-  const payload = type === 'assistant/message' && typeof data === 'object' && data !== null
-    ? { ...(data as Record<string, unknown>), stream: (data as { stream?: unknown }).stream ?? [] }
-    : data
   return {
     type: 'event',
     event: {
       seq,
       time: 1_700_000_000_000 + seq,
       type,
-      data: payload,
+      data,
       ...extra,
-    } as unknown as SessionEvent,
+    } as SessionEvent,
   }
 }
 
@@ -101,10 +98,11 @@ function packedInputs(entries: readonly SessionLiveEventEntry[]): SessionEventLi
   } | undefined
   const flush = (): void => {
     if (active === undefined) return
+    const firstTokenTime = assistantStreamFirstTokenTime(active.stream.snapshot())
     output.push(at(active.last.event.seq, 'assistant/attempt', {
       turn: active.turn,
       step: active.step,
-      stream: active.stream.snapshot(),
+      ...firstTokenTime === undefined ? {} : { firstTokenTime },
     }, { time: active.last.event.time }))
     active = undefined
   }
@@ -135,11 +133,12 @@ function packedInputs(entries: readonly SessionLiveEventEntry[]): SessionEventLi
       && current !== undefined
       && current.turn === event.data.turn
       && current.step === event.data.step) {
+      const firstTokenTime = assistantStreamFirstTokenTime(current.stream.snapshot())
       output.push({
         ...entry,
         event: {
           ...entry.event,
-          data: { ...entry.event.data, stream: current.stream.snapshot() },
+          data: { ...entry.event.data, ...firstTokenTime === undefined ? {} : { firstTokenTime } },
         } as SessionEvent,
       })
       active = undefined
@@ -1432,8 +1431,6 @@ describe('built-in conversation node Definitions', () => {
   ])('retains the Assistant key after $outcome retirement (startLoaded=$startLoaded)', ({ outcome, startLoaded }) => {
     const attemptId = LlmAttemptId('retired-chat-attempt')
     const chunk = { type: 'text-delta' as const, index: 0, text: 'Discarded reply' }
-    const stream = new AssistantStreamAccumulator()
-    stream.push({ time: 1_030, chunk })
     const value = assembler([
       at(1, 'turn/start', { turn: 1 }),
       ...startLoaded ? [at(2, 'step/start', { turn: 1, step: 1 })] : [],
@@ -1452,7 +1449,7 @@ describe('built-in conversation node Definitions', () => {
     expect(visible?.visibility).toBe('visible')
 
     if (outcome === 'attempt') {
-      const event = at(3, 'assistant/attempt', { turn: 1, step: 1, stream: stream.snapshot() }).event
+      const event = at(3, 'assistant/attempt', { turn: 1, step: 1, firstTokenTime: 1_030 }).event
       if (event.type !== 'assistant/attempt') throw new Error('expected Assistant attempt')
       value.settleAssistant(attemptId, { type: 'event', event })
     } else value.settleAssistant(attemptId)
@@ -1511,11 +1508,8 @@ describe('built-in conversation node Definitions', () => {
       status: 'running', time: 1_030, blocks: [{ kind: 'text', text: 'Answer' }],
     })
 
-    const stream = new AssistantStreamAccumulator()
-    stream.push({ time: 1_030, chunk })
     const event = at(3, 'assistant/message', {
-      turn: 1, step: 1, message: assistantMessage('settled-timing', 'Answer'),
-      stream: stream.snapshot(), usage: { outputTokens: 10 },
+      turn: 1, step: 1, message: assistantMessage('settled-timing', 'Answer'), usage: { outputTokens: 10 },
     }, { surfaceOp: 'append', time: 1_050 }).event
     if (event.type !== 'assistant/message') throw new Error('expected Assistant settlement')
     const settlement = { type: 'event' as const, event }
@@ -1539,7 +1533,7 @@ describe('built-in conversation node Definitions', () => {
     }
   })
 
-  it('uses live Assistant deltas without replaying settled embedded streams', () => {
+  it('uses live Assistant deltas without replaying settled sidecar streams', () => {
     const runningHistory = [
       at(1, 'turn/start', { turn: 1 }),
       at(2, 'step/start', { turn: 1, step: 1 }),
@@ -1583,7 +1577,7 @@ describe('built-in conversation node Definitions', () => {
     const runningAttempt = packedHistory.at(-1)?.event
     expect(runningAttempt?.type).toBe('assistant/attempt')
     if (runningAttempt?.type !== 'assistant/attempt') throw new Error('expected packed running attempt')
-    expect(runningAttempt.data.stream.length).toBeGreaterThan(0)
+    expect(runningAttempt.data.firstTokenTime).toBe(1_000)
     const packed = assembler(packedHistory)
 
     const running = node(snapshot(scalar), 'assistant-step')
@@ -1649,7 +1643,7 @@ describe('built-in conversation node Definitions', () => {
     expect(finalizedInputs.filter(input => input.event.type === 'assistant/attempt')).toHaveLength(1)
     const finalizedMessage = finalizedInputs.find(input => input.event.type === 'assistant/message')?.event
     if (finalizedMessage?.type !== 'assistant/message') throw new Error('expected packed final message')
-    expect(finalizedMessage.data.stream.length).toBeGreaterThan(0)
+    expect(finalizedMessage.data.firstTokenTime).toBe(1_700_000_000_027)
     const finalizedPacked = snapshot(assembler(finalizedInputs))
     const finalNode = (node(finalizedPacked, 'assistant-step')?.data as AssistantChatData).finalNode
     expect(finalNode).toMatchObject({
@@ -1676,7 +1670,7 @@ describe('built-in conversation node Definitions', () => {
     const namedToolInputs = packedInputs(namedToolHistory)
     const namedToolMessage = namedToolInputs.find(input => input.event.type === 'assistant/message')?.event
     if (namedToolMessage?.type !== 'assistant/message') throw new Error('expected packed named-tool message')
-    expect(namedToolMessage.data.stream.length).toBeGreaterThan(0)
+    expect(namedToolMessage.data.firstTokenTime).toBe(4_000)
     const namedToolPacked = snapshot(assembler(namedToolInputs))
     const namedTool = (node(namedToolPacked, 'assistant-step')?.data as AssistantChatData).finalNode
     expect(namedTool).toMatchObject({

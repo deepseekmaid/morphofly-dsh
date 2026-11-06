@@ -11,8 +11,11 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { SESSION_FORMAT_VERSION, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
-import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
-import { SessionAssistantStreamUnavailableError } from '@deepseek-ai/dsh-session-persistence'
+import { MessageId, type AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
+import {
+  SessionAssistantStreamUnavailableError,
+  type SessionHandle,
+} from '@deepseek-ai/dsh-session-persistence'
 import SessionStore from '@deepseek-ai/dsh-session'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { generationLogPath, sessionDir } from '../src/format.ts'
@@ -47,9 +50,15 @@ async function mount(root: string): Promise<Context> {
   return ctx
 }
 
+/** The provider's on-demand stream reader; the JSONL backend always exposes this capability. */
+function streamReader(handle: SessionHandle): NonNullable<SessionHandle['readAssistantStream']> {
+  const read = handle.readAssistantStream
+  if (read === undefined) throw new Error('JSONL session handle exposes no readAssistantStream')
+  return read.bind(handle)
+}
+
 /** Append one carrying turn; returns the settlement sequence. */
 function appendCarryingTurn(
-  ctx: Context,
   session: ReturnType<Context['sessions']['create']>,
   stream: readonly AssistantStreamRecord[],
 ): number {
@@ -58,7 +67,7 @@ function appendCarryingTurn(
   const settlement = session.appendWithCarry('assistant/message', {
     turn: 1, step: 1,
     message: {
-      id: 'assistant', role: 'assistant',
+      id: MessageId('assistant'), role: 'assistant',
       content: [{ type: 'text', text: 'hello' }],
       source: { kind: 'model', provider: 'mock', model: 'mock' },
     },
@@ -106,10 +115,10 @@ describe('SessionHandle.readAssistantStream', () => {
     const handle = await ctx.sessionPersistence.create(session.header)
     let settled: number
     try {
-      settled = appendCarryingTurn(ctx, session, STREAM)
+      settled = appendCarryingTurn(session, STREAM)
       await expect(ctx.sessions.flush(session)).resolves.toBe(true)
-      await expect(handle.readAssistantStream(settled)).resolves.toEqual(STREAM)
-      await expect(handle.readAssistantStream(SessionSeq(0))).resolves.toBeUndefined()
+      await expect(streamReader(handle)(settled)).resolves.toEqual(STREAM)
+      await expect(streamReader(handle)(SessionSeq(0))).resolves.toBeUndefined()
     } finally {
       await handle.close()
     }
@@ -117,8 +126,8 @@ describe('SessionHandle.readAssistantStream', () => {
     // A fresh read handle observes the same sidecar without a live producer.
     const reader = await ctx.sessionPersistence.open(session.id, 'read')
     try {
-      await expect(reader.readAssistantStream(settled)).resolves.toEqual(STREAM)
-      await expect(reader.readAssistantStream(SessionSeq(settled + 1))).resolves.toBeUndefined()
+      await expect(streamReader(reader)(settled)).resolves.toEqual(STREAM)
+      await expect(streamReader(reader)(SessionSeq(settled + 1))).resolves.toBeUndefined()
     } finally {
       await reader.close()
     }
@@ -130,9 +139,9 @@ describe('SessionHandle.readAssistantStream', () => {
     const session = ctx.sessions.create(SessionId('empty'))
     const handle = await ctx.sessionPersistence.create(session.header)
     try {
-      const settled = appendCarryingTurn(ctx, session, [])
+      const settled = appendCarryingTurn(session, [])
       await expect(ctx.sessions.flush(session)).resolves.toBe(true)
-      await expect(handle.readAssistantStream(settled)).resolves.toEqual([])
+      await expect(streamReader(handle)(settled)).resolves.toEqual([])
     } finally {
       await handle.close()
     }
@@ -146,7 +155,7 @@ describe('SessionHandle.readAssistantStream', () => {
     try {
       // An explicit append never carries a stream, so the settlement has no sidecar.
       await handle.append(oneTurnLog())
-      await expect(handle.readAssistantStream(SessionSeq(3)))
+      await expect(streamReader(handle)(SessionSeq(3)))
         .rejects.toBeInstanceOf(SessionAssistantStreamUnavailableError)
     } finally {
       await handle.close()
@@ -162,8 +171,8 @@ describe('SessionHandle.readAssistantStream', () => {
     const handle = await ctx.sessionPersistence.open(id, 'read')
     try {
       expect(handle.header.version).toBe(SESSION_FORMAT_VERSION)
-      await expect(handle.readAssistantStream(SessionSeq(2))).resolves.toEqual(STREAM)
-      await expect(handle.readAssistantStream(SessionSeq(0))).resolves.toBeUndefined()
+      await expect(streamReader(handle)(SessionSeq(2))).resolves.toEqual(STREAM)
+      await expect(streamReader(handle)(SessionSeq(0))).resolves.toBeUndefined()
     } finally {
       await handle.close()
     }
@@ -181,7 +190,7 @@ describe('SessionHandle.readAssistantStream', () => {
     const successor = generationLogPath(root, undefined, id, SESSION_FORMAT_VERSION, 'none')
     const handle = await ctx.sessionPersistence.open(id, 'write')
     try {
-      await expect(handle.readAssistantStream(SessionSeq(2))).resolves.toEqual(STREAM)
+      await expect(streamReader(handle)(SessionSeq(2))).resolves.toEqual(STREAM)
     } finally {
       await handle.close()
     }
@@ -224,7 +233,7 @@ describe('SessionHandle.readAssistantStream', () => {
     await ctx.plugin(JsonlSessionPersistence, { root, compression: 'zstd' })
     const handle = await ctx.sessionPersistence.open(id, 'read')
     try {
-      await expect(handle.readAssistantStream(SessionSeq(2))).resolves.toEqual(STREAM)
+      await expect(streamReader(handle)(SessionSeq(2))).resolves.toEqual(STREAM)
     } finally {
       await handle.close()
     }
@@ -236,10 +245,10 @@ describe('SessionHandle.readAssistantStream', () => {
     const session = ctx.sessions.create(SessionId('corrupt-sidecar'))
     const handle = await ctx.sessionPersistence.create(session.header)
     try {
-      const settled = appendCarryingTurn(ctx, session, STREAM)
+      const settled = appendCarryingTurn(session, STREAM)
       await expect(ctx.sessions.flush(session)).resolves.toBe(true)
       await writeFile(join(sessionDir(root, session.header.cwd, session.id), 'streams.v1', `s${settled}.jsonl`), '{broken')
-      await expect(handle.readAssistantStream(settled))
+      await expect(streamReader(handle)(settled))
         .rejects.toBeInstanceOf(SessionAssistantStreamUnavailableError)
     } finally {
       await handle.close()
@@ -257,7 +266,7 @@ describe('SessionHandle.readAssistantStream', () => {
       const rows = (await readFile(source, 'utf8')).split('\n').filter(Boolean)
       rows[3] = '{broken'
       await writeFile(source, `${rows.join('\n')}\n`)
-      await expect(handle.readAssistantStream(SessionSeq(2)))
+      await expect(streamReader(handle)(SessionSeq(2)))
         .rejects.toBeInstanceOf(SessionAssistantStreamUnavailableError)
     } finally {
       await handle.close()
@@ -272,7 +281,7 @@ describe('SessionHandle.readAssistantStream', () => {
     const handle = await ctx.sessionPersistence.open(id, 'read')
     try {
       await rm(source)
-      await expect(handle.readAssistantStream(SessionSeq(2)))
+      await expect(streamReader(handle)(SessionSeq(2)))
         .rejects.toBeInstanceOf(SessionAssistantStreamUnavailableError)
     } finally {
       await handle.close()
@@ -291,7 +300,7 @@ describe('SessionHandle.readAssistantStream', () => {
       delete settlement.data['stream']
       rows[3] = JSON.stringify(settlement)
       await writeFile(source, `${rows.join('\n')}\n`)
-      await expect(handle.readAssistantStream(SessionSeq(2)))
+      await expect(streamReader(handle)(SessionSeq(2)))
         .rejects.toBeInstanceOf(SessionAssistantStreamUnavailableError)
     } finally {
       await handle.close()

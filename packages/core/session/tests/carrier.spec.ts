@@ -8,7 +8,7 @@ const stream: readonly AssistantStreamRecord[] = [
   { type: 'chunk', time: 10, chunk: { type: 'text-delta', index: 0, text: 'hi' } },
   { type: 'chunk', time: 20, chunk: { type: 'usage', usage: { inputTokens: 1, outputTokens: 1 } } },
 ]
-const attempt = { turn: 1, step: 1, stream }
+const attempt = { turn: 1, step: 1 }
 
 describe('Session append carrier', () => {
   let ctx: Context
@@ -63,7 +63,7 @@ describe('Session append carrier', () => {
   it('never copies the payload into the event or the log', () => {
     const session = live()
     const event = session.appendWithCarry('assistant/attempt', attempt, { assistantStream: stream })
-    expect(Object.keys(event.data)).toEqual(['turn', 'step', 'stream'])
+    expect(Object.keys(event.data)).toEqual(['turn', 'step'])
     expect(event.data).toEqual(attempt)
     expect(session.snapshotEvents()).toEqual([event])
   })
@@ -75,7 +75,7 @@ describe('Session append carrier', () => {
     const message = createAssistantMessage({ content: [], source: { provider: 'test', model: 'test' } })
     const event = session.appendWithCarry(
       'assistant/message',
-      { turn: 1, step: 1, message, stream },
+      { turn: 1, step: 1, message },
       { assistantStream: stream },
       { surfaceOp: 'append' },
     )
@@ -85,12 +85,9 @@ describe('Session append carrier', () => {
 
   it('drops the payload when the append itself is rejected', () => {
     const session = live()
-    const malformed: readonly AssistantStreamRecord[] = [
-      { type: 'chunk', time: 1, chunk: { type: 'usage', usage: { inputTokens: Number.NaN, outputTokens: 1 } } },
-    ]
     expect(() => session.appendWithCarry(
       'assistant/attempt',
-      { turn: 1, step: 1, stream: malformed },
+      { turn: 1, step: 1, usage: { inputTokens: Number.NaN, outputTokens: 1 } },
       { assistantStream: stream },
     )).toThrow('non-JSON-serializable')
     expect(session.seq).toBe(0)

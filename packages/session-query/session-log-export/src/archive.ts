@@ -374,6 +374,7 @@ export function sessionLogZipFilename(sessionId: string): string {
  * @param sessionId - the root session id.
  * @param includeDescendants - whether to include every subagent descendant.
  * @param signal - optional cancellation forwarded to lineage, persistence, and attachment reads.
+ * @param rootEntries - entries that precede the root log, such as its stream sidecars.
  * @returns the export entries in zip order.
  */
 export async function* sessionLogZipEntries(
@@ -575,6 +576,7 @@ async function pushArtifactChunks(
  * @param includeDescendants - whether to include every subagent descendant.
  * @param compressionLevel - validated fflate DEFLATE level for every ZIP entry.
  * @param signal - request cancellation combined with response-consumer cancellation.
+ * @param rootEntries - entries that precede the root log, such as its stream sidecars.
  * @returns the zip byte stream.
  */
 export function streamSessionLogZip(

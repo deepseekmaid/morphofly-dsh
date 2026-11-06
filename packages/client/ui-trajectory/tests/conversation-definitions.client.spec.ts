@@ -72,7 +72,7 @@ function at(
       type,
       data,
       ...extra,
-    } as unknown as SessionEvent,
+    } as SessionEvent,
   }
 }
 

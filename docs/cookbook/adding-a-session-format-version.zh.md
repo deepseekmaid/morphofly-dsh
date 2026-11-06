@@ -14,7 +14,6 @@
 - [4. 更新当前版本消费方](#current-version-consumers)
 - [5. 创建快照后继代际](#snapshot-successors)
 - [6. 验证集成结果](#validate)
-- [开发者 V4 日志集试迁移](#v4-corpus-trial)
 - [开发备注](#dev-note)
 
 <a id="choose-the-version"></a>
@@ -117,21 +116,6 @@ pnpm run doc-sync
 pnpm run lint
 git diff --check
 ```
-
-<a id="v4-corpus-trial"></a>
-### 开发者 V4 日志集试迁移
-
-在已安装依赖、写入器为 V4 的贡献者工作区中使用这个一次性[迁移脚本](../../scripts/migrate-sessions-to-v4.ts)。开始前停止使用目标根目录的 DSH 进程，避免写入锁及变化中的子日志阻止迁移。在仓库根目录运行：
-
-```sh
-pnpm run migrate:sessions-to-v4
-```
-
-默认根目录是 `~/.dsh/sessions`。可用 `--sessions-dir /path/to/sessions-copy` 指定其他日志集，或用 `--help` 查看用法。默认并发数取可用 CPU 数且最多为 16；`--jobs N` 接受任意正安全整数，专家用户可指定更大的值，`--jobs 1` 则串行运行。有界队列只同时打开指定数量的 Session，不随日志集大小增加。每个历史 Session 都通过正常的加锁、校验和发布流程，在未修改的源文件旁创建 V4 后继。已有 V4 Session 仅以只读方式打开；重复运行不会重新转换它们。脚本不发起模型请求，也不改变转换或拒绝规则。
-
-终端逐个报告 Session 选中的文件、版本、进度、结果和耗时。单个错误不会阻止后续 Session。最终摘要列出全部失败项及系统临时目录中的完整诊断日志；存在任何失败时返回非零退出状态。同时打印 JSON，并把相同报告保存为 `migration.log` 旁的 `summary.json`：包含按源版本和结果统计的数量、失败原因分组、逐项诊断、运行时信息和两份报告路径。已知诊断提取事件类型、非预期字段、是否涉及子日志及序号；未知错误保留消息，不推断原因。报告迁移问题时，请附上这些报告。本次转换成功的 Session 与运行前已为 V4 的 Session 分开统计。
-
-并发转换时，子 Session 发布 V4 可能使父 Session 使用的子日志证据失效。只有这种源变化错误会在全部首次任务结束后串行重试一次；损坏、不支持的格式和已持有的写入锁会立即报告。完成行保留原始输入编号，并单独显示已完成数量，使乱序结果仍易于阅读。
 
 <a id="final-v3-vocabulary"></a>
 ### 发布 V4 前确认最终 V3 事件词汇

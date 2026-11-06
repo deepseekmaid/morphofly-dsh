@@ -120,18 +120,22 @@ export async function writeAssistantStreamFixture(
   return name
 }
 
-/** Whether one projected Session fixture text carries an Assistant settlement row. */
+/**
+ * Whether one projected Session fixture text carries an Assistant settlement row.
+ * @param content - projected Session fixture text, one JSON row per line.
+ * @returns whether any row is an `assistant/message` or `assistant/attempt` event.
+ */
 export function sessionFixtureHasAssistantSettlement(content: string): boolean {
   for (const line of content.split('\n')) {
     if (line.trim().length === 0) continue
     let record: unknown
     try {
-      record = JSON.parse(line) as unknown
+      record = JSON.parse(line)
     } catch (error) {
       throw new Error('session fixture line contains invalid JSON', { cause: error })
     }
     if (record === null || typeof record !== 'object' || Array.isArray(record)) continue
-    const type = (record as { type?: unknown }).type
+    const type = (record as { type?: string }).type
     if (type === 'assistant/message' || type === 'assistant/attempt') return true
   }
   return false

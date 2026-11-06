@@ -66,7 +66,7 @@ const COMPACTION_ID = CompactionId('replay-compaction')
 /** Build a minimal session-JSONL string: a header line + the given events. */
 function sessionJsonl(
   events: SessionEvent[],
-  header?: { id?: string; createdAt?: number; seedLength?: number; version?: 0 | 1 | 2 | 3 | 4 },
+  header?: { id?: string; createdAt?: number; seedLength?: number; version?: 0 | 1 | 2 | 3 | 4 | 5 },
 ): string {
   const version = header?.version ?? 0
   const headerLine = JSON.stringify({
@@ -109,7 +109,7 @@ function releasedV2ResultMessage(callId: ToolCallId): ToolResultMessage {
  */
 function replaySessionJsonl(
   calls: readonly StreamChunk[][],
-  header?: { id?: string; createdAt?: number; seedLength?: number; version?: 0 | 1 | 2 | 3 | 4 },
+  header?: { id?: string; createdAt?: number; seedLength?: number; version?: 0 | 1 | 2 | 3 | 4 | 5 },
 ): string {
   const version = header?.version ?? 4
   const events: SessionEvent[] = []
@@ -1293,7 +1293,9 @@ describe('loadReplayScript', () => {
     expect(() => loadReplayScript({ file })).toThrow(/V5 replay requires a sidecar stream reader/)
     expect(loadReplayScript({
       file,
-      readAssistantStream: event => event.data.turn === 1 ? streamRecords(TEXT_CHUNKS) : undefined,
+      readAssistantStream: event => event.type === 'assistant/message' && event.data.turn === 1
+        ? streamRecords(TEXT_CHUNKS)
+        : undefined,
     })).toEqual([{ kind: 'chunks', chunks: TEXT_CHUNKS }])
   })
 

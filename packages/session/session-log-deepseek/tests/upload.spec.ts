@@ -18,6 +18,11 @@ import * as SessionLogDeepSeek from '../src/index.ts'
 import type { DeepSeekSessionLogExtension, DeepSeekSessionLogWireEvent, DeepSeekSessionLogWireSurfaceOp } from '../src/types.ts'
 
 const contexts: Context[] = []
+/** Treat one deliberately invalid envelope as the event the upload guard must reject. */
+function invalidEvent(event: object): SessionEvent {
+  return structuredClone(event) as SessionEvent
+}
+
 const SIGNAL = new AbortController().signal
 
 afterEach(async () => {
@@ -154,9 +159,9 @@ describe('incremental DeepSeek session-log upload', () => {
 
   it.each(['turn/start', 'assistant/attempt', 'request/context', 'tool/ptc-dispatch'])('rejects known log-only %s metadata before uploading', async (type) => {
     for (const metadata of [{ surfaceOp: 'append' }, { sourceEventSeqs: [0] }]) {
-      const event = {
+      const event = invalidEvent({
         type, seq: SessionSeq(0), time: 1, data: { turn: 1, step: 1 }, ignorable: true, ...metadata,
-      } as unknown as SessionEvent
+      })
       await expect(harness('wire-invalid', [event])).rejects.toThrow(/not surface-eligible/)
     }
   })

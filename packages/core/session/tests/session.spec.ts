@@ -234,22 +234,22 @@ describe('Session', () => {
         .toThrow(/invalid settlement fields/)
     }
 
-    const mismatchedMessage = {
+    const mismatchedMessage: SessionEvent<'assistant/message'> = {
       type: 'assistant/message',
-      seq: 0,
+      seq: SessionSeq(0),
       time: 1,
       data: {
         turn: 1,
         step: 1,
         message: {
-          id: 'message',
+          id: MessageId('message'),
           role: 'assistant',
           content: [{ type: 'text', text: 'different' }],
           source: { kind: 'model', provider: 'mock', model: 'mock' },
         },
       },
       surfaceOp: 'append',
-    } as unknown as SessionEvent
+    }
     const restored = Session.fromRestore(
       id,
       [mismatchedMessage],

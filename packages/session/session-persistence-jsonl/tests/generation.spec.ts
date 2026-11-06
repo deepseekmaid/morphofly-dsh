@@ -1,3 +1,4 @@
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
 import { SESSION_FORMAT_VERSION, SessionSeq } from '@deepseek-ai/dsh-session'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
@@ -1771,7 +1772,7 @@ describe('embedded Assistant stream helpers', () => {
   })
 
   it('captures only well-formed settlement rows by sequence', () => {
-    const into = new Map<SessionSeq, readonly unknown[]>()
+    const into = new Map<SessionSeq, readonly AssistantStreamRecord[]>()
     const candidates: unknown[] = [
       42,
       [],
