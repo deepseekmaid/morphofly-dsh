@@ -9,7 +9,7 @@
 {"type":"request/header","data":{"header":{"config":{"provider":"deepseek-official","model":"deepseek-flash"},"tools":"{{tools}}"},"reason":"initial"}}
 {"type":"request/context","data":{"provider":"deepseek-official","model":"deepseek-flash","contextWindow":1000000}}
 {"type":"session/title","data":{"title":"Read red.png with read_image, then","messageSeqs":[5],"source":{"kind":"fallback"}}}
-{"type":"assistant/message","data":{"turn":1,"step":1,"message":{"role":"assistant","content":[{"type":"tool-call","id":"minimal-image-read","name":"read_image","arguments":"{\"file_path\":\"red.png\"}"}],"source":{"kind":"model","provider":"deepseek-official","model":"deepseek-flash"},"id":"{{message:4}}"},"usage":{"inputTokens":10,"outputTokens":4},"firstTokenTime":1793917701402},"surfaceOp":"append"}
+{"type":"assistant/message","data":{"turn":1,"step":1,"message":{"role":"assistant","content":[{"type":"tool-call","id":"minimal-image-read","name":"read_image","arguments":"{\"file_path\":\"red.png\"}"}],"source":{"kind":"model","provider":"deepseek-official","model":"deepseek-flash"},"id":"{{message:4}}"},"usage":{"inputTokens":10,"outputTokens":4},"firstTokenTime":1793922243266},"surfaceOp":"append"}
 {"type":"tool/call","data":{"turn":1,"step":1,"callId":"minimal-image-read","name":"read_image","arguments":"{\"file_path\":\"red.png\"}"}}
 {"type":"tool/result","data":{"turn":1,"step":1,"message":{"role":"tool","source":{"kind":"tool","callId":"minimal-image-read"},"toolCallId":"minimal-image-read","content":[{"type":"text","text":"<path>{{cwd}}/red.png</path>\n<type>image</type>\n<content>\nimage/png image, 1x1 px, 69 bytes\n</content>"},{"type":"image","attachment":{"attachmentId":"sha256:b1ff9c8ea3a780bad09b346c423d2d0e46815926879b18e841d928376a946640","mediaType":"image/png","bytes":69,"width":1,"height":1,"name":"red.png"}}],"isError":false,"id":"{{message:5}}"},"meta":{"path":"{{cwd}}/red.png"}},"sourceEventSeqs":[11],"surfaceOp":"append"}
 {"type":"step/end","data":{"turn":1,"step":1}}
@@ -23,6 +23,6 @@
 {"type":"assistant/attempt","data":{"turn":1,"step":2}}
 {"type":"image/offload","data":{"targets":[{"seq":12,"imageIndexes":[0]}]}}
 {"type":"request/header","data":{"header":{"config":{"provider":"deepseek-official","model":"deepseek-flash"},"tools":"{{tools}}"},"reason":"series"}}
-{"type":"assistant/message","data":{"turn":1,"step":2,"message":{"role":"assistant","content":[{"type":"text","text":"MINIMAL_IMAGE_OK"}],"source":{"kind":"model","provider":"deepseek-official","model":"deepseek-flash"},"id":"{{message:8}}"},"usage":{"inputTokens":10,"outputTokens":4},"firstTokenTime":1793917701516},"surfaceOp":"append"}
+{"type":"assistant/message","data":{"turn":1,"step":2,"message":{"role":"assistant","content":[{"type":"text","text":"MINIMAL_IMAGE_OK"}],"source":{"kind":"model","provider":"deepseek-official","model":"deepseek-flash"},"id":"{{message:8}}"},"usage":{"inputTokens":10,"outputTokens":4},"firstTokenTime":1793922243432},"surfaceOp":"append"}
 {"type":"step/end","data":{"turn":1,"step":2}}
 {"type":"turn/end","data":{"turn":1,"reason":{"kind":"completed"}}}

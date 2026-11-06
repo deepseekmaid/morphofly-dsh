@@ -222,6 +222,9 @@ export async function harvestSessionStreams(
     const streams = new Map<number, AssistantStreamRecords>()
     for (const event of session.snapshotEvents()) {
       if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') continue
+      // An inherited prefix keeps its streams in the source Session; a fork does
+      // not copy them, so only child-owned settlements belong to this fixture.
+      if (event.seq < session.inheritedEventCount) continue
       const records = await handle.readAssistantStream?.(event.seq)
       if (records !== undefined) streams.set(event.seq, records)
     }
