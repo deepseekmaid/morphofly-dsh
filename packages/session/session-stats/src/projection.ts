@@ -1,6 +1,6 @@
 /**
- * The `sessionStats` projection unit: a pure fold of step boundaries, stream
- * embedded streams, tool pairs, and assembled assistant messages into whole-log counts
+ * The `sessionStats` projection unit: a pure fold of step boundaries, settlement
+ * scalars, tool pairs, and assembled assistant messages into whole-log counts
  * and wall times.
  *
  * `step/end` — not `assistant/message` — is the counted step event because it
@@ -13,18 +13,17 @@
  * The wall-time folds mirror the client window fold field by field
  * (`deriveStats` in dsh-client-ui-conversation, that fold's whole-window
  * fallback role): model time is `step/start` → `assistant/message`, first
- * token is the first non-empty delta chunk and survives an in-step
- * `llm/retry`, decode spans first token → assembled message on steps that
- * also report output tokens, and tool time pairs `tool/call` → `tool/result`
- * by callId. A cancelled step assembles no message, so its partial stream
- * time stays uncounted in every time figure — matching the window, which
- * renders it as an untimed interrupted node.
+ * token is the `firstTokenTime` scalar recorded on the settlement event and
+ * survives an in-step `llm/retry`, decode spans first token → assembled
+ * message on steps that also report output tokens, and tool time pairs
+ * `tool/call` → `tool/result` by callId. A cancelled step assembles no
+ * message, so its partial stream time stays uncounted in every time figure —
+ * matching the window, which renders it as an untimed interrupted node.
  *
  * @module @deepseek-ai/dsh-session-stats/projection
  */
 
 import { z } from 'zod'
-import { assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 
 
@@ -132,14 +131,14 @@ export const sessionStatsProjectionDefinition = {
       case 'assistant/attempt': {
         const open = state.openStep
         if (open === null || open.turn !== event.data.turn || open.step !== event.data.step) return state
-        const first = assistantStreamFirstTokenTime(event.data.stream) ?? null
+        const first = event.data.firstTokenTime ?? null
         if (open.firstTokenTime !== null || first === null) return state
         return { ...state, openStep: { ...open, firstTokenTime: first } }
       }
       case 'assistant/message': {
         const open = state.openStep
         if (open === null || open.turn !== event.data.turn || open.step !== event.data.step) return state
-        const firstToken = open.firstTokenTime ?? assistantStreamFirstTokenTime(event.data.stream) ?? null
+        const firstToken = open.firstTokenTime ?? event.data.firstTokenTime ?? null
         // One assembled message per step: closing the boundary means a
         // defensive duplicate cannot accrue twice.
         const next: SessionStatsState = {

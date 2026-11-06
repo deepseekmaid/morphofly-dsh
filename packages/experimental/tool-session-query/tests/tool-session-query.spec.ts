@@ -2037,7 +2037,6 @@ describe('trace and exact read rendering', () => {
     session.append(
       'assistant/message',
       {
-        stream: [],
         turn: 1,
         step: 1,
         message: createMessage({

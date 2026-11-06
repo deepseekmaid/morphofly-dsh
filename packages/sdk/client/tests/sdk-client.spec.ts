@@ -269,16 +269,17 @@ describe('DeepSeekHarness', () => {
       'agent/inbox/spliced', 'turn/start', 'assistant/message', 'turn/end',
     ])
     const message = first.events.find(event => event.type === 'assistant/message')
-    expect(message?.data.stream).toEqual([
-      { type: 'chunk', time: 0, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-      { type: 'text-chunks', time0: 0, index: 0, dt: [], texts: ['turn answer'] },
-      {
-        type: 'chunk',
-        time: 0,
-        chunk: { type: 'block-end', index: 0, block: { type: 'text', text: 'turn answer' } },
+    // V5 settlements carry no inline stream; the wire drops the payload the
+    // client used to assert and keeps the assembled message and its scalars.
+    expect(message?.data).toMatchObject({
+      turn: 0,
+      step: 0,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'turn answer' }],
+        source: { kind: 'model', provider: 'fake', model: 'fake' },
       },
-      { type: 'chunk', time: 0, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-    ])
+    })
 
     // Same subprocess, second session: ids differ, protocol state is reusable.
     const second = await harness.run([{ type: 'text', text: 'again' }])

@@ -23,7 +23,7 @@ function attemptEvent(seq: number, turn = 1, step = 1): SessionLiveEventEntry {
     type: 'assistant/attempt',
     seq: SessionSeq(seq),
     time: seq,
-    data: { turn, step, stream: [] },
+    data: { turn, step },
   })
 }
 
@@ -44,7 +44,6 @@ function messageEvent(
         content: [{ type: 'text', text: 'done' }],
         source: { provider: 'mock', model: 'mock' },
       }),
-      stream: [],
     },
     surfaceOp: surfaceOp === 'append'
       ? surfaceOp

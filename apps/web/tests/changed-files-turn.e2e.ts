@@ -8,11 +8,10 @@ import { chromium, type Browser, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest'
 import type {} from '@deepseek-ai/dsh-workspace-changes'
 import type { ChangesSummary } from '@deepseek-ai/dsh-client-ui-deliverables/src/changes.ts'
-import { deriveReplayScript, parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
 import { PartialArguments } from '@deepseek-ai/dsh-util-values'
 import {
   assertFinalWorkspaceSnapshot, captureExpandedTurnProcessAria, compareOrRefreshGolden,
-  fixtureUserPrompts, launchWebScaffold, recordFixture, watchConsole,
+  deriveFixtureReplayScript, fixtureUserPrompts, launchWebScaffold, recordFixture, watchConsole,
   webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
 import { openSettings, connectFreshWorkspaceZh, expandOwningTurnProcess, ZH_BROWSER_LOCALE } from './support.ts'
@@ -70,7 +69,7 @@ describe('web e2e: a git workspace turn ends with its changed files', () => {
     if (MODE !== 'record') {
       replayRoot = await mkdtemp(join(tmpdir(), 'dsh-changed-files-turn-replay-'))
       replayOverride = join(replayRoot, 'replay.override.json')
-      const script = deriveReplayScript(parseSessionLog(await readFile(FIXTURE, 'utf8')))
+      const script = await deriveFixtureReplayScript(FIXTURE)
       // Recorded absolute paths must follow each isolated Session's working directory.
       const cwdToken = '{{fromRequest:Current working directory: "([^"]+)"}}'
       await writeFile(replayOverride, JSON.stringify(script).replaceAll('{{cwd}}', JSON.stringify(cwdToken).slice(1, -1)))

@@ -7,6 +7,7 @@ import { scrubSessionSnapshot } from '@deepseek-ai/dsh-session-snapshot'
 import {
   canonicalSessionFixture,
   inspectSessionFixtureLayouts,
+  isAssistantStreamFixture,
   isPhysicalSessionFixture,
 } from './session-fixture-layout.ts'
 
@@ -17,16 +18,7 @@ const FIXTURE_MESSAGE = createAssistantMessage({
   content: [{ type: 'text', text: 'part-0part-1part-2part-3' }],
   source: { provider: 'mock', model: 'mock' },
 })
-const FIXTURE_STREAM: SessionEvent<'assistant/message'>['data']['stream'] = [
-  {
-    type: 'text-chunks',
-    time0: 10,
-    index: 0,
-    dt: [1, 1, 1],
-    texts: ['part-0', 'part-1', 'part-2', 'part-3'],
-  },
-  { type: 'chunk', time: 14, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-]
+const FIXTURE_USAGE = { inputTokens: 3, outputTokens: 4, totalTokens: 7 }
 
 function assistantMessage(): SessionEvent<'assistant/message'> {
   return {
@@ -37,7 +29,8 @@ function assistantMessage(): SessionEvent<'assistant/message'> {
       turn: 1,
       step: 1,
       message: FIXTURE_MESSAGE,
-      stream: FIXTURE_STREAM,
+      usage: FIXTURE_USAGE,
+      firstTokenTime: 10,
     },
     surfaceOp: 'append',
   }
@@ -78,7 +71,7 @@ describe('canonicalSessionFixture', () => {
     expect(scrubSessionSnapshot(written)).toBe(written)
   })
 
-  it('preserves the header line and nested compact stream losslessly', () => {
+  it('preserves the header line and settlement scalars losslessly', () => {
     const canonical = canonicalSessionFixture(unpackedFixture(), 'fixture.jsonl')
     expect(canonical).toBeDefined()
     expect(canonical?.split('\n')[0]).toBe(HEADER)
@@ -88,9 +81,14 @@ describe('canonicalSessionFixture', () => {
     expect(message).toMatchObject({
       type: 'assistant/message',
       data: {
-        stream: FIXTURE_STREAM,
+        turn: 1,
+        step: 1,
+        message: FIXTURE_MESSAGE,
+        usage: FIXTURE_USAGE,
+        firstTokenTime: 10,
       },
     })
+    expect((message as { data: Record<string, unknown> }).data).not.toHaveProperty('stream')
     expect(message).not.toHaveProperty('seq')
     expect(message).not.toHaveProperty('time')
     expect(decodedBody(canonical ?? '').map(({ seq: _seq, time: _time, ...event }) => event))
@@ -223,6 +221,15 @@ describe('isPhysicalSessionFixture', () => {
     )).toBe(false)
     expect(isPhysicalSessionFixture('apps/web/tests/snapshots/example/session.jsonl')).toBe(false)
   })
+})
+
+it('ignores committed Assistant-stream sidecar fixtures', () => {
+  expect(isAssistantStreamFixture('snapshots/session/example/session.v5.streams.jsonl')).toBe(true)
+  expect(isAssistantStreamFixture('snapshots/session/example/session.1.v5.streams.jsonl')).toBe(true)
+  expect(isAssistantStreamFixture('snapshots/session/example/session.v5.jsonl')).toBe(false)
+  // A zero-generation sidecar name is canonical but never written: only the current writer emits one.
+  expect(isAssistantStreamFixture('snapshots/session/example/session.streams.jsonl')).toBe(true)
+  expect(canonicalSessionFixture('{"seq":1,"stream":[]}\n')).toBeUndefined()
 })
 
 it('keeps every session-format JSONL fixture projected into canonical event layout', () => {

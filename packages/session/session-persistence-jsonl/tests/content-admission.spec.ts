@@ -2,14 +2,17 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionFormatJsonObject } from '@deepseek-ai/dsh-session-format'
+import { assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
+import type { SessionFormatJsonObject, SessionFormatJsonValue } from '@deepseek-ai/dsh-session-format'
 import { SessionFormatUnsupportedError } from '@deepseek-ai/dsh-session-persistence'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { generationLogPath, scanLog, type JsonlCompression } from '../src/format.ts'
+import { generationLogPath, scanLog, sessionDir, type JsonlCompression } from '../src/format.ts'
+import { assistantStreamDirectory } from '../src/streams.ts'
 import { compressZstdFrame, decompressZstdFrame, scanZstdFrames } from '../src/zstd.ts'
 
 const id = SessionId('content-admission')
@@ -137,6 +140,28 @@ function line(value: unknown): string {
   return JSON.stringify(value) + '\n'
 }
 
+/** Whether one admitted JSON value is a JSON object rather than a primitive or array. */
+function isJsonObject(
+  value: SessionFormatJsonObject | readonly SessionFormatJsonValue[] | null | boolean | number | string | undefined,
+): value is SessionFormatJsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function migratedSettlement(type: string, data: SessionFormatJsonObject): SessionFormatJsonObject {
+  if (type !== 'assistant/message' && type !== 'assistant/attempt') return data
+  const { stream: _stream, ...rest } = data
+  const firstTokenTime = assistantStreamFirstTokenTime((data['stream'] ?? []) as readonly AssistantStreamRecord[])
+  return { ...rest, ...(firstTokenTime === undefined ? {} : { firstTokenTime }) }
+}
+
+/** Extra directory entries a published V5 successor gains, by source settlements. */
+function successorExtras(rows: readonly SessionFormatJsonObject[]): string[] {
+  const settlements = rows.some(row => row['type'] === 'assistant/message' || row['type'] === 'assistant/attempt')
+  if (!settlements) return []
+  if (root === undefined) throw new Error('persistence fixture is not initialized')
+  return [assistantStreamDirectory(sessionDir(root, undefined, id))]
+}
+
 async function store(compression: JsonlCompression, rows: readonly SessionFormatJsonObject[]) {
   if (root === undefined) throw new Error('persistence fixture is not initialized')
   const path = generationLogPath(root, undefined, id, 2, compression)
@@ -210,7 +235,12 @@ describe.each(['none', 'zstd'] as const)('V2 admitted content publication (%s)',
     expect(restored.events.at(-1)).toMatchObject({
       type: carrier.targetType ?? tail['type'], seq: rows.length,
     })
-    expect(restored.events.at(-1)?.data).toEqual(carrier.targetData ?? tail['data'])
+    const tailData = tail['data']
+    if (!isJsonObject(tailData)) {
+      throw new Error(`content-admission carrier "${carrier.name}" has no object data`)
+    }
+    expect(restored.events.at(-1)?.data)
+      .toEqual(carrier.targetData ?? migratedSettlement(tail['type'], tailData))
     expect(await observe(path)).toEqual(original)
     await expectOnlyGenerations([path])
 
@@ -231,7 +261,7 @@ describe.each(['none', 'zstd'] as const)('V2 admitted content publication (%s)',
     }
     expect(scanLog(decoded).events).toEqual(restored.events)
     expect(await observe(path)).toEqual(original)
-    await expectOnlyGenerations([path, successor])
+    await expectOnlyGenerations([path, successor, ...successorExtras(rows)])
 
     await ctx.fiber.dispose()
     const fresh = await mount(compression)
@@ -242,6 +272,6 @@ describe.each(['none', 'zstd'] as const)('V2 admitted content publication (%s)',
     } finally { await reopened.close() }
     expect(await observe(path)).toEqual(original)
     expect(await readFile(successor)).toEqual(published)
-    await expectOnlyGenerations([path, successor])
+    await expectOnlyGenerations([path, successor, ...successorExtras(rows)])
   })
 })

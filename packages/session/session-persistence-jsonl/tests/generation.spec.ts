@@ -1,4 +1,5 @@
-import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
+import { SESSION_FORMAT_VERSION, SessionSeq } from '@deepseek-ai/dsh-session'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import {
@@ -19,10 +20,12 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import {
+  captureEmbeddedAssistantStream,
   JsonlGenerationSourceChangedError,
   JsonlGenerationTargetConflictError,
   JsonlGenerationUnsupportedMigrationError,
   prepareJsonlMigration,
+  readEmbeddedAssistantStream,
   readDecodedJsonlSource,
   verifyJsonlCurrentGeneration,
   type JsonlGenerationFormatAdapter,
@@ -134,6 +137,30 @@ function assistantData(
     ],
     ...(overrides.usage === null ? {} : { usage: overrides.usage ?? assistantUsage }),
     ...(overrides.interrupted === undefined ? {} : { interrupted: overrides.interrupted }),
+  }
+}
+
+/** A current V5 settlement payload: scalar summaries only, no embedded stream. */
+function v5AssistantData(
+  overrides: {
+    readonly content?: readonly SessionFormatJsonValue[]
+    readonly usage?: SessionFormatJsonValue
+    readonly interrupted?: true
+    readonly firstTokenTime?: number
+  } = {},
+): SessionFormatJsonValue {
+  return {
+    turn: 1,
+    step: 1,
+    message: {
+      id: 'assistant',
+      role: 'assistant',
+      content: overrides.content ?? [{ type: 'text', text: 'hello' }],
+      source: { kind: 'model', provider: 'mock', model: 'mock', replayState: assistantReplayState },
+    },
+    ...(overrides.usage === undefined ? { usage: assistantUsage } : { usage: overrides.usage }),
+    ...(overrides.interrupted === undefined ? {} : { interrupted: overrides.interrupted }),
+    firstTokenTime: overrides.firstTokenTime ?? 3,
   }
 }
 
@@ -537,7 +564,7 @@ describe('JSONL immutable generation publication', () => {
       .rejects.toThrow('torn physical tail')
   })
 
-  it('keeps complete Assistant stream checks in current-generation verification', async () => {
+  it('verifies current-generation settlements whose streams live beside the log', async () => {
     const root = await tempRoot()
     const path = generationPath(root, SESSION_FORMAT_VERSION, 'none')
     const verify = async (events: readonly SessionFormatEvent[]) => {
@@ -545,37 +572,22 @@ describe('JSONL immutable generation publication', () => {
       return verifyJsonlCurrentGeneration(path, 'none', 'generation-test', events.length)
     }
 
+    // V5 settlements carry scalars; the lossless stream is a sidecar, so the
+    // current generation verifies without replaying embedded chunks.
     const valid = [
-      assistantLifecycle('assistant/message', assistantData()),
-      assistantLifecycle('assistant/message', assistantData({
-        interrupted: true,
-        stream: [{ type: 'text-chunks', time0: 3, index: 0, dt: [], texts: ['hello'] }],
-        usage: null,
-        replayState: null,
-      })),
-      assistantLifecycle('assistant/message', assistantData({
-        content: [], stream: [], usage: null, replayState: null,
-      })),
+      assistantLifecycle('assistant/message', v5AssistantData()),
+      assistantLifecycle('assistant/message', v5AssistantData({ interrupted: true, firstTokenTime: 5 })),
+      assistantLifecycle('assistant/message', v5AssistantData({ content: [] })),
       assistantLifecycle('assistant/attempt', {
-        turn: 1,
-        step: 1,
-        stream: [{ type: 'text-chunks', time0: 3, index: 0, dt: [1], texts: ['a', 'b'] }],
+        turn: 1, step: 1, usage: assistantUsage, firstTokenTime: 3,
       }),
     ]
     for (const events of valid) expect((await verify(events)).bytes).toBeGreaterThan(0)
 
+    // A V5 row that still embeds its stream is refused by V5 admission.
     await expect(verify(assistantLifecycle('assistant/attempt', {
-      turn: 1, step: 1, stream: [{ type: 'future' }],
-    }))).rejects.toThrow(/invalid embedded stream/)
-    await expect(verify(assistantLifecycle('assistant/message', assistantData({
-      content: [{ type: 'text', text: 'different' }],
-    })))).rejects.toThrow(/content disagrees/)
-    await expect(verify(assistantLifecycle('assistant/message', assistantData({
-      usage: { inputTokens: 9, outputTokens: 2 },
-    })))).rejects.toThrow(/usage disagrees/)
-    await expect(verify(assistantLifecycle('assistant/message', assistantData({
-      replayState: { response: { id: 'different' } },
-    })))).rejects.toThrow(/replay state disagrees/)
+      turn: 1, step: 1, stream: [],
+    }))).rejects.toThrow(/carries an embedded assistant stream/)
   })
 
   it('accepts an identical publication winner and rejects different bytes', async () => {
@@ -1648,5 +1660,133 @@ describe('JSONL immutable generation publication', () => {
 
     await expect(ensureJsonlGenerationCurrent(request)).rejects.toThrow('cancelled migration')
     expect(await readdir(root)).toEqual(['session.jsonl'])
+  })
+})
+
+describe('embedded Assistant stream helpers', () => {
+  const records = [{ type: 'text-chunks', time0: 3, index: 0, dt: [], texts: ['hello'] }]
+  const settlement = { type: 'assistant/message', seq: 2, time: 5, surfaceOp: 'append', data: {
+    turn: 1, step: 1,
+    message: {
+      id: 'assistant', role: 'assistant', content: [{ type: 'text', text: 'hello' }],
+      source: { kind: 'model', provider: 'mock', model: 'mock' },
+    },
+    stream: records,
+  } }
+  const sourceRows = [
+    { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
+    { type: 'step/start', seq: 1, time: 2, data: { turn: 1, step: 1 } },
+    settlement,
+    { type: 'step/end', seq: 3, time: 6, data: { turn: 1, step: 1 } },
+  ]
+
+  /** Write one historical generation in the requested physical encoding. */
+  async function writeHistorical(
+    root: string,
+    name: string,
+    rows: readonly unknown[],
+    compression: JsonlCompression = 'none',
+  ): Promise<string> {
+    const path = join(root, name)
+    const lines = [line(header(4)), ...rows.map(row => line(row))]
+    const bytes = compression === 'none'
+      ? Buffer.from(lines.join(''))
+      : Buffer.concat([await compressZstdFrame(lines[0]!), await compressZstdFrame(lines.slice(1).join(''))])
+    await writeFile(path, bytes)
+    return path
+  }
+
+  it('reads one embedded settlement row by sequence in both encodings', async () => {
+    const root = await tempRoot()
+    const plain = await writeHistorical(root, 'session.v4.jsonl', sourceRows)
+    await expect(readEmbeddedAssistantStream(plain, 'none', SessionSeq(2))).resolves.toEqual(records)
+    await expect(readEmbeddedAssistantStream(plain, 'none', SessionSeq(0))).resolves.toBeUndefined()
+    await expect(readEmbeddedAssistantStream(plain, 'none', SessionSeq(99))).resolves.toBeUndefined()
+
+    const framed = await writeHistorical(root, 'session.v4.jsonl.zstd', sourceRows, 'zstd')
+    await expect(readEmbeddedAssistantStream(framed, 'zstd', SessionSeq(2))).resolves.toEqual(records)
+    await expect(readEmbeddedAssistantStream(framed, 'zstd', SessionSeq(99))).resolves.toBeUndefined()
+
+    // The target record itself split across frames exercises the fragment buffer.
+    const headerLine = line(header(4))
+    const body = sourceRows.map(row => line(row)).join('')
+    const settlementAt = body.indexOf('"stream"')
+    const split = join(root, 'split.v4.jsonl.zstd')
+    await writeFile(split, Buffer.concat([
+      await compressZstdFrame(headerLine + body.slice(0, settlementAt + 3)),
+      await compressZstdFrame(body.slice(settlementAt + 3)),
+    ]))
+    await expect(readEmbeddedAssistantStream(split, 'zstd', SessionSeq(2))).resolves.toEqual(records)
+
+    // Resuming exactly on the record's newline exercises the empty-fragment arm.
+    const newlineSplit = join(root, 'newline-split.v4.jsonl.zstd')
+    const boundary = body.indexOf('\n', settlementAt)
+    await writeFile(newlineSplit, Buffer.concat([
+      await compressZstdFrame(headerLine + body.slice(0, boundary)),
+      await compressZstdFrame(body.slice(boundary)),
+    ]))
+    await expect(readEmbeddedAssistantStream(newlineSplit, 'zstd', SessionSeq(2))).resolves.toEqual(records)
+
+    const empty = join(root, 'empty.jsonl.zstd')
+    await writeFile(empty, Buffer.alloc(0))
+    await expect(readEmbeddedAssistantStream(empty, 'zstd', SessionSeq(0)))
+      .rejects.toThrow(/empty or header-less/)
+  })
+
+  it('refuses a corrupt, mismatched, or invalid embedded row', async () => {
+    const root = await tempRoot()
+    const scalar = join(root, 'scalar.jsonl')
+    await writeFile(scalar, [
+      line(header(4)),
+      line(sourceRows[0]),
+      line(sourceRows[1]),
+      '42\n',
+      line(sourceRows[3]),
+    ].join(''))
+    await expect(readEmbeddedAssistantStream(scalar, 'none', SessionSeq(2)))
+      .rejects.toThrow(/is not a JSON object/)
+    const corrupt = join(root, 'corrupt.jsonl')
+    await writeFile(corrupt, [
+      line(header(4)),
+      line(sourceRows[0]),
+      line(sourceRows[1]),
+      '{bad json}\n',
+      line(sourceRows[3]),
+    ].join(''))
+    await expect(readEmbeddedAssistantStream(corrupt, 'none', SessionSeq(2)))
+      .rejects.toThrow(/not valid JSON/)
+
+    const mismatch = await writeHistorical(root, 'mismatch.jsonl', [
+      ...sourceRows.slice(0, 2), { ...settlement, seq: 7 }, ...sourceRows.slice(3),
+    ])
+    await expect(readEmbeddedAssistantStream(mismatch, 'none', SessionSeq(2)))
+      .rejects.toThrow(/identifies sequence 7/)
+
+    const invalid = await writeHistorical(root, 'invalid.jsonl', [
+      ...sourceRows.slice(0, 2),
+      { ...settlement, data: { ...settlement.data, stream: [{ type: 'future' }] } },
+      ...sourceRows.slice(3),
+    ])
+    await expect(readEmbeddedAssistantStream(invalid, 'none', SessionSeq(2)))
+      .rejects.toThrow(/invalid embedded Assistant stream/)
+  })
+
+  it('captures only well-formed settlement rows by sequence', () => {
+    const into = new Map<SessionSeq, readonly AssistantStreamRecord[]>()
+    const candidates: unknown[] = [
+      42,
+      [],
+      { seq: 1 },
+      { type: 'turn/start', seq: 0 },
+      { type: 'assistant/message' },
+      { type: 'assistant/message', seq: -1 },
+      { type: 'assistant/message', seq: 0 },
+      { type: 'assistant/message', seq: 1, data: null },
+      { type: 'assistant/message', seq: 2, data: { stream: 'records' } },
+      settlement,
+    ]
+    for (const candidate of candidates) captureEmbeddedAssistantStream(candidate, into)
+    expect([...into.keys()]).toEqual([2])
+    expect(into.get(SessionSeq(2))).toEqual(records)
   })
 })

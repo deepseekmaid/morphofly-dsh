@@ -32,10 +32,11 @@ import {
   type SessionPersistenceSnapshot, type SessionPersistenceStatOptions,
   type SessionPersistenceRevision as PersistenceRevision,
 } from '@deepseek-ai/dsh-session-persistence'
-import { JsonlBackendTracker, JsonlSessionHandle, type StorageHandleState } from './storage.ts'
+import { JsonlBackendTracker, JsonlSessionHandle, type AssistantStreamCarry, type StorageHandleState } from './storage.ts'
 import { SessionWriteLease } from './lease.ts'
-import { SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionHeader, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
 import {
   assertNoRetiredHeaderFields, encodeSegment, eventLines, generationLogFilename, generationLogPath, logPath, logSuffix,
   parseGenerationLogFilename, projectDir, scanLog, sessionDir, SessionLogScanner, toHeaderLine,
@@ -45,12 +46,15 @@ import {
   compressZstdFrame, createZstdFrameDecoder, decompressZstdFrame, decompressZstdPrefix, scanZstdFrames,
 } from './zstd.ts'
 import { ensureDurableDirectoryWin32, publishNewFileWin32 } from './win32.ts'
+import { readAssistantStream as readStoredAssistantStream, writeAssistantStream } from './streams.ts'
 import { verifyCurrentGenerationInWorker } from './migration-verifier.ts'
 import { prepareCatalogFacts } from './catalog-migration.ts'
 import {
+  captureEmbeddedAssistantStream,
   JsonlGenerationSourceChangedError,
   JsonlGenerationUnsupportedMigrationError,
   prepareJsonlMigration,
+  readEmbeddedAssistantStream as readEmbeddedAssistantStreamRow,
   readStableJsonlFile,
   type JsonlGenerationFormatAdapter,
   type JsonlPhysicalIdentity,
@@ -67,6 +71,10 @@ export type { JsonlCompression } from './format.ts'
 const COLD_LOG_MEMO_MAX_ENTRIES = 2
 
 const DEFAULT_COMPRESSION: JsonlCompression = 'zstd'
+
+/** No Assistant streams accompany this write (header-only materialization). */
+const NO_ASSISTANT_STREAMS: AssistantStreamCarry = new Map()
+
 /**
  * Internal scheduling constant, not deployment configuration: balance
  * frame-boundary event-loop yields against `setImmediate` overhead. One frame
@@ -141,6 +149,8 @@ interface CurrentStoredLog extends StoredLogBase {
 interface PreparedStoredLog extends StoredLogBase {
   readonly status: 'prepared'
   readonly validateRelatedSources: () => Promise<void>
+  /** Embedded settlement streams captured from the historical source, keyed by sequence. */
+  readonly assistantStreams: AssistantStreamCarry
   readonly publication: {
     readonly source: ResolvedJsonlGeneration
     readonly value: PreparedJsonlMigration
@@ -408,6 +418,7 @@ class JsonlSessionPersistence extends SessionPersistence {
           materialized: true,
           inheritedEventCount: stored.inheritedEventCount,
           primed: stored,
+          assistantStreamSource: stored.publication.source.sourcePath,
         }
       } else {
         state = {
@@ -681,6 +692,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     selected: ResolvedJsonlGeneration,
     signal: AbortSignal,
   ): Promise<PreparedStoredLog> {
+    const assistantStreams = new Map<SessionSeq, readonly AssistantStreamRecord[]>()
     let prepared: Awaited<ReturnType<typeof prepareJsonlMigration>>
     let validateRelatedSources: () => Promise<void>
     try {
@@ -719,6 +731,7 @@ class JsonlSessionPersistence extends SessionPersistence {
           id,
           signal,
         ),
+        captureSourceEvent: (event) => { captureEmbeddedAssistantStream(event, assistantStreams) },
         signal,
       })
     } catch (error: unknown) {
@@ -731,6 +744,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     const stored: PreparedStoredLog = {
       status: 'prepared',
       validateRelatedSources,
+      assistantStreams,
       meta,
       ...freezeStoredEvents(events),
       tornTruncateTo: undefined,
@@ -748,6 +762,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     const migration = stored.publication
     let identity: JsonlPhysicalIdentity
     try {
+      await this.writeMigratedAssistantStreams(stored)
       identity = await migration.value.publish()
     } catch (error: unknown) {
       /* v8 ignore else -- a newer preparation may have replaced this stale cache entry. */
@@ -766,6 +781,20 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
     this.memoizeStoredLog(id, published)
     return published
+  }
+
+  /**
+   * Publish the sidecars captured from a historical generation before its V5
+   * successor becomes visible. A partial failure leaves only reusable sidecars;
+   * the source generation is untouched and a retry reuses identical bytes.
+   */
+  private async writeMigratedAssistantStreams(stored: PreparedStoredLog): Promise<void> {
+    if (stored.assistantStreams.size === 0) return
+    const directory = dirname(stored.publication.source.sourcePath)
+    const entries = [...stored.assistantStreams.entries()].sort(([left], [right]) => left - right)
+    for (const [seq, stream] of entries) {
+      await writeAssistantStream(directory, seq, stream, this.compression)
+    }
   }
 
   /** Translate generation-layer failures into the persistence seam's error vocabulary. */
@@ -871,6 +900,47 @@ class JsonlSessionPersistence extends SessionPersistence {
     return stored
   }
 
+  /**
+   * Read the sidecar Assistant stream stored beside the current generation.
+   * @param header - the session whose sidecars are addressed.
+   * @param seq - sequence of the settlement event.
+   * @param signal - optional cancellation.
+   * @returns the stored records, or `undefined` when no sidecar is published.
+   */
+  async readAssistantStream(
+    header: SessionHeader,
+    seq: SessionSeq,
+    signal?: AbortSignal,
+  ): Promise<readonly AssistantStreamRecord[] | undefined> {
+    signal?.throwIfAborted()
+    return readStoredAssistantStream(sessionDir(this.root, header.cwd, header.id), seq, this.compression)
+  }
+
+  /**
+   * Read one historical generation row's embedded Assistant stream.
+   * @param path - immutable historical generation file.
+   * @param seq - sequence of the settlement event.
+   * @param signal - optional cancellation.
+   * @returns the embedded records, or `undefined` when the row keeps none.
+   */
+  async readEmbeddedAssistantStream(
+    path: string,
+    seq: SessionSeq,
+    signal?: AbortSignal,
+  ): Promise<readonly AssistantStreamRecord[] | undefined> {
+    try {
+      return await readEmbeddedAssistantStreamRow(path, this.compression, seq, signal)
+    } catch (error: unknown) {
+      if (isErrnoException(error)) throw error
+      /* v8 ignore next -- cancellation during a fallback read is timing-dependent; the caller owns the signal. */
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      throw new SessionPersistenceCorruptionError(
+        `historical generation keeps an unreadable assistant stream (raw log: ${path})`,
+        { cause: error },
+      )
+    }
+  }
+
   /** Insert one parsed log into the bounded handoff cache. */
   private memoizeStoredLog(id: SessionId, stored: StoredLog): void {
     this.coldLogMemo.delete(id)
@@ -907,19 +977,21 @@ class JsonlSessionPersistence extends SessionPersistence {
    * @param events - the validated contiguous batch, in seq order.
    * @param isMaterialized - whether the session already has a durable artifact.
    * @param inheritedEventCount - the exact fork-inherited prefix length written into a materializing header line.
+   * @param assistantStreams - streams carried by this batch, keyed by owning event sequence.
    */
   async persistBatch(
     header: SessionHeader,
     events: readonly SessionEvent[],
     isMaterialized: boolean,
     inheritedEventCount: SessionLogOffsetType,
+    assistantStreams: AssistantStreamCarry,
   ): Promise<void> {
     this.coldLogMemo.delete(header.id)
     await this.ensureRootEncoding()
     if (isMaterialized) {
-      await this.appendLines(header, events)
+      await this.appendLines(header, events, assistantStreams)
     } else {
-      await this.materialize(header, inheritedEventCount, events)
+      await this.materialize(header, inheritedEventCount, events, assistantStreams)
       this.tracker.materialized(header.id)
     }
   }
@@ -932,7 +1004,7 @@ class JsonlSessionPersistence extends SessionPersistence {
   async persistHeader(header: SessionHeader, inheritedEventCount: SessionLogOffsetType): Promise<void> {
     this.coldLogMemo.delete(header.id)
     await this.ensureRootEncoding()
-    await this.materialize(header, inheritedEventCount, [])
+    await this.materialize(header, inheritedEventCount, [], NO_ASSISTANT_STREAMS)
     this.tracker.materialized(header.id)
   }
 
@@ -1266,7 +1338,9 @@ class JsonlSessionPersistence extends SessionPersistence {
     meta: SessionHeader,
     inheritedEventCount: SessionLogOffsetType,
     events: readonly SessionEvent[],
+    assistantStreams: AssistantStreamCarry,
   ): Promise<void> {
+    await this.writeAssistantStreams(meta, events, assistantStreams)
     const project = projectDir(this.root, meta.cwd)
     const dir = sessionDir(this.root, meta.cwd, meta.id)
     const finalPath = logPath(this.root, meta.cwd, meta.id, this.compression)
@@ -1358,6 +1432,25 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
   }
 
+  /**
+   * Durably publish the Assistant streams carried by one batch, in sequence
+   * order, before any of the batch's log lines. A retry re-serializes the same
+   * carrier, so a sidecar that already landed is reused instead of conflicting.
+   */
+  private async writeAssistantStreams(
+    meta: SessionHeader,
+    events: readonly SessionEvent[],
+    assistantStreams: AssistantStreamCarry,
+  ): Promise<void> {
+    if (assistantStreams.size === 0) return
+    const dir = sessionDir(this.root, meta.cwd, meta.id)
+    for (const event of events) {
+      const stream = assistantStreams.get(event.seq)
+      if (stream === undefined) continue
+      await writeAssistantStream(dir, event.seq, stream, this.compression)
+    }
+  }
+
   private async writeSyncedTempFile(finalPath: string, content: Buffer | string): Promise<string> {
     const tmp = `${finalPath}.${randomBytes(6).toString('hex')}.tmp`
     const handle = await open(tmp, 'wx', 0o600)
@@ -1410,7 +1503,12 @@ class JsonlSessionPersistence extends SessionPersistence {
    * previous size before rethrowing because the unchanged cursor will retry the
    * batch; leaving partial bytes would create duplicate sequence numbers.
    */
-  private async appendLines(meta: SessionHeader, events: readonly SessionEvent[]): Promise<void> {
+  private async appendLines(
+    meta: SessionHeader,
+    events: readonly SessionEvent[],
+    assistantStreams: AssistantStreamCarry,
+  ): Promise<void> {
+    await this.writeAssistantStreams(meta, events, assistantStreams)
     const content = await this.encodeEventBatch(events)
     const path = logPath(this.root, meta.cwd, meta.id, this.compression)
     const handle = await open(path, 'a')

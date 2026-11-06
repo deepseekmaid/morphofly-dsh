@@ -19,9 +19,10 @@ import type {
   RequestErrorAction,
 } from '@deepseek-ai/dsh-agent'
 import { AgentModel, agentEvents, assembleContextFor } from '@deepseek-ai/dsh-agent'
-import type { GenerateOptions, LlmCallConfig, Message, PreparedLlmCall } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord, GenerateOptions, LlmCallConfig, Message, PreparedLlmCall, TokenUsage } from '@deepseek-ai/dsh-llm'
 import {
   LlmError,
+  assistantStreamFirstTokenTime,
   createAssistantMessage,
   createDeveloperMessage,
   errorChain,
@@ -41,6 +42,23 @@ import { ReactLoopInbox } from './inbox.ts'
 import { RuntimeContextProjection } from './runtime-context.ts'
 import { AssistantStreamAttempt } from './assistant-stream.ts'
 import { SystemPromptProjection } from './runtime-context.ts'
+
+/**
+ * Scalars one V5 settlement event keeps beside its sidecar stream.
+ * @param stream - exact compact stream settled by the event.
+ * @param usage - adapter token accounting for this attempt, when reported.
+ * @returns the first-token latency and usage the event carries.
+ */
+function settlementScalars(
+  stream: readonly AssistantStreamRecord[],
+  usage: TokenUsage | undefined,
+): { usage?: TokenUsage; firstTokenTime?: number } {
+  const firstTokenTime = assistantStreamFirstTokenTime(stream)
+  return {
+    ...usage === undefined ? {} : { usage },
+    ...firstTokenTime === undefined ? {} : { firstTokenTime },
+  }
+}
 
 /** Projected facts consumed by this driver; registration stays with the factory. */
 interface LoopProjections {
@@ -502,7 +520,8 @@ export class ReactLoopAgent implements Agent {
           if (signal.aborted) {
             const content = live.interruptedBlocks()
             if (content.length > 0) {
-              live.settle('assistant/message', () => this.session.append('assistant/message', {
+              const stream = live.stream
+              live.settle('assistant/message', () => this.session.appendWithCarry('assistant/message', {
                 turn,
                 step,
                 message: createAssistantMessage({
@@ -514,19 +533,20 @@ export class ReactLoopAgent implements Agent {
                   },
                 }),
                 interrupted: true,
-                ...live.usage === undefined ? {} : { usage: live.usage },
-                stream: live.stream,
-              }, { surfaceOp: 'append' }).seq)
+                ...settlementScalars(stream, live.usage),
+              }, { assistantStream: stream }, { surfaceOp: 'append' }).seq)
             } else {
+              const stream = live.stream
               live.settle(
                 'assistant/attempt',
-                () => this.session.append('assistant/attempt', { turn, step, stream: live.stream }).seq,
+                () => this.session.appendWithCarry('assistant/attempt', { turn, step, ...settlementScalars(stream, live.usage) }, { assistantStream: stream }).seq,
               )
             }
           } else {
+            const stream = live.stream
             live.settle(
               'assistant/attempt',
-              () => this.session.append('assistant/attempt', { turn, step, stream: live.stream }).seq,
+              () => this.session.appendWithCarry('assistant/attempt', { turn, step, ...settlementScalars(stream, live.usage) }, { assistantStream: stream }).seq,
             )
           }
         } catch (settlementError: unknown) {
@@ -541,9 +561,10 @@ export class ReactLoopAgent implements Agent {
       try {
         const finish = live.finish
         if (finish.kind === 'error' || finish.kind === 'aborted') {
+          const stream = live.stream
           live.settle(
             'assistant/attempt',
-            () => this.session.append('assistant/attempt', { turn, step, stream: live.stream }).seq,
+            () => this.session.appendWithCarry('assistant/attempt', { turn, step, ...settlementScalars(stream, live.usage) }, { assistantStream: stream }).seq,
           )
           const action = await this.dispatch.waterfall(
             'agent/request-error', {
@@ -571,15 +592,15 @@ export class ReactLoopAgent implements Agent {
             ...live.replayState !== undefined ? { replayState: live.replayState } : {},
           },
         })
+        const settlementStream = live.stream
         live.settle(
           'assistant/message',
-          () => this.session.append('assistant/message', {
+          () => this.session.appendWithCarry('assistant/message', {
             turn,
             step,
             message,
-            ...live.usage === undefined ? {} : { usage: live.usage },
-            stream: live.stream,
-          }, { surfaceOp: 'append' }).seq,
+            ...settlementScalars(settlementStream, live.usage),
+          }, { assistantStream: settlementStream }, { surfaceOp: 'append' }).seq,
         )
         if (finish.kind === 'max-tokens') return { kind: 'max-tokens' }
 

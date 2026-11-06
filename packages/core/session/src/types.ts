@@ -87,7 +87,7 @@ export type OptionalSessionSeq = SessionSeq | null
  * Compatibility review and the retained migration obligations are recorded in
  * `.agents/notes/implemented/process/2026-10-08-session-reader-compatibility-review.md`.
  */
-export const SESSION_FORMAT_VERSION = 4
+export const SESSION_FORMAT_VERSION = 5
 
 /**
  * Immutable validated storage metadata, kept outside the conversation event log.
@@ -281,8 +281,9 @@ export type RequestHeaderReason = 'initial' | 'resume' | 'change' | 'series'
 /**
  * The merge-extensible, append-only source of truth for an agent interaction.
  * Message history is derived from this log. Every event is lossless JSON and
- * sequence numbers stay contiguous. Assistant attempt events embed their exact
- * compact raw streams so persistence stores one durable settlement per attempt.
+ * sequence numbers stay contiguous. Assistant settlement events keep only the
+ * scalars synchronous folds read; persistence stores their exact compact raw
+ * streams in Session-local sidecars.
  */
 export interface SessionEventMap {
   /**
@@ -350,17 +351,25 @@ export interface SessionEventMap {
     turn: number
     step: number
     message: AssistantMessage
-    /** Exact timed model stream, compacted without joining delta boundaries. */
-    stream: AssistantStreamRecord[]
     usage?: TokenUsage
     interrupted?: true
+    /** Epoch milliseconds of the first output token; absent when the stream carried none. */
+    firstTokenTime?: number
   }
   /**
-   * One model attempt that committed no surface message. The embedded stream
-   * preserves a failed, retried, cancelled, or stream-error attempt that
-   * reached settlement without fabricating model-visible history.
+   * One model attempt that committed no surface message. The Session-local
+   * sidecar preserves the exact timed stream of a failed, retried, cancelled,
+   * or stream-error attempt that reached settlement without fabricating
+   * model-visible history; the event keeps only the scalars that synchronous
+   * folds need.
    */
-  'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[] }
+  'assistant/attempt': {
+    turn: number
+    step: number
+    usage?: TokenUsage
+    /** Epoch milliseconds of the first output token; absent when the stream carried none. */
+    firstTokenTime?: number
+  }
   /**
    * The model requested one tool invocation: `name` with the raw `arguments`
    * JSON string exactly as the model produced it (unparsed). `callId` pairs the
@@ -478,12 +487,24 @@ export type SurfaceOp =
 export type SurfaceIntent<T extends SurfaceEventType = SurfaceEventType> = {
   surfaceOp: SurfaceOp
 } & (T extends 'assistant/message' ? {
-  /** Assistant messages embed their provider stream instead of citing source events. */
+  /** Assistant messages never cite earlier source events. */
   sourceEventSeqs?: never
 } : {
   /** Complete non-empty set of known earlier source-event seqs. */
   sourceEventSeqs?: SessionSeq[]
 })
+
+/**
+ * Non-durable side payload carried alongside one {@link Session.appendWithCarry}.
+ *
+ * A persistence writer claims the payload during the append's synchronous
+ * `session/event` dispatch. Carried data never enters the event log, and a
+ * payload no writer claims is dropped when the append returns.
+ */
+export interface SessionAppendCarry {
+  /** Compact Assistant stream settled by this event, moved out of the log by format V5. */
+  readonly assistantStream?: readonly AssistantStreamRecord[]
+}
 
 /**
  * One immutable entry in the session log.

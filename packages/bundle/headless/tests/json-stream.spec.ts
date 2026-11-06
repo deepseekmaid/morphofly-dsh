@@ -3,8 +3,18 @@
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import { MessageId, ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { boundJsonLine, MAX_STRING_BYTES, projectJsonRun, type JsonProjectionOptions } from '../src/json-stream.ts'
+
+/** One test-double event: the projector reads only `type`, `data`, and `surfaceOp`. */
+interface EmittedEvent {
+  readonly type: SessionEvent['type']
+  readonly data: object
+  readonly surfaceOp?: 'append' | { op: 'replace'; startSeq: number; endSeq: number }
+}
 
 interface ProjectionHarness {
   readonly lines: string[]
@@ -12,16 +22,15 @@ interface ProjectionHarness {
   readonly agent: Agent
   readonly session: Session
   readonly parsed: () => Record<string, unknown>[]
-  emitSession(event: SessionEvent): void
-  emitRawSession(session: unknown, event: SessionEvent): void
+  emitSession(event: EmittedEvent): void
+  emitRawSession(session: unknown, event: EmittedEvent): void
 }
 
 /** One committed assistant message carrying the given content blocks. */
-function assistantMessage(content: unknown[], usage?: unknown): SessionEvent {
+function assistantMessage(content: unknown[], usage?: unknown): EmittedEvent {
   return {
     type: 'assistant/message',
     data: {
-      stream: [],
       turn: 1,
       step: 1,
       ...usage === undefined ? {} : { usage },
@@ -31,37 +40,50 @@ function assistantMessage(content: unknown[], usage?: unknown): SessionEvent {
         source: { kind: 'model', provider: 'p', model: 'm' },
       },
     },
-  } as unknown as SessionEvent
+  }
 }
 
-/** One discarded attempt whose stream reports the given usage sample. */
-function attemptWithUsage(usage: unknown): SessionEvent {
+/** One discarded attempt carrying the given usage sample. */
+function attemptWithUsage(usage: unknown): EmittedEvent {
   return {
     type: 'assistant/attempt',
-    data: { turn: 1, step: 1, stream: [{ type: 'chunk', chunk: { type: 'usage', usage } }] },
-  } as unknown as SessionEvent
+    data: { turn: 1, step: 1, usage },
+  }
 }
 
 /** One step boundary event closing the accumulated usage window. */
-function stepEnd(): SessionEvent {
-  return { type: 'step/end', data: { turn: 1, step: 1 } } as unknown as SessionEvent
+function stepEnd(): EmittedEvent {
+  return { type: 'step/end', data: { turn: 1, step: 1 } }
 }
 
 /** One tool result event with the given surface placement. */
 function toolResult(
   callId: string,
-  content: unknown[],
+  content: ContentBlock[],
   surfaceOp: 'append' | { op: 'replace'; startSeq: number; endSeq: number } = 'append',
-): SessionEvent {
+): SessionEvent<'tool/result'> {
   return {
     type: 'tool/result',
-    surfaceOp,
+    seq: SessionSeq(0),
+    time: 0,
+    surfaceOp: typeof surfaceOp === 'string' ? surfaceOp : {
+      op: surfaceOp.op,
+      startSeq: SessionSeq(surfaceOp.startSeq),
+      endSeq: SessionSeq(surfaceOp.endSeq),
+    },
     data: {
       turn: 1,
       step: 1,
-      message: { role: 'tool', toolCallId: callId, isError: false, content },
+      message: {
+        id: MessageId('tool-result'),
+        role: 'tool',
+        toolCallId: ToolCallId(callId),
+        source: { kind: 'tool', callId: ToolCallId(callId) },
+        isError: false,
+        content,
+      },
     },
-  } as unknown as SessionEvent
+  }
 }
 
 /** Drive the projector through a minimal Context and Agent double. */
@@ -71,7 +93,7 @@ function harness(
   cwd: string | null = '/',
 ): ProjectionHarness {
   const lines: string[] = []
-  const sessionListeners = new Set<(session: unknown, event: SessionEvent) => void>()
+  const sessionListeners = new Set<(session: unknown, event: EmittedEvent) => void>()
   const ctx = {
     on(name: string, handler: unknown) {
       if (name === 'session/event') sessionListeners.add(handler as never)
@@ -140,8 +162,8 @@ describe('--json projection', () => {
     const test = harness()
     test.emitSession({
       type: 'assistant/attempt',
-      data: { turn: 1, step: 1, stream: [] },
-    } as unknown as SessionEvent)
+      data: { turn: 1, step: 1 },
+    })
     test.emitSession({ type: 'session/title', data: { title: 'ignored' } } as unknown as SessionEvent)
     expect(test.parsed().map(event => event.type)).toEqual(['session'])
   })
@@ -366,23 +388,22 @@ describe('--json projection', () => {
     expect(usage).not.toHaveProperty('cacheWriteTokens')
   })
 
-  it('reads a message usage sample from its stream when the field is absent', () => {
+  it('omits the step total when the committed message omits usage', () => {
     const test = harness()
     test.emitSession({
       type: 'assistant/message',
       data: {
         turn: 1,
         step: 1,
-        stream: [{ type: 'chunk', chunk: { type: 'usage', usage: { inputTokens: 5, outputTokens: 1 } } }],
         message: {
           role: 'assistant',
           content: [{ type: 'text', text: 'hi' }],
           source: { kind: 'model', provider: 'p', model: 'm' },
         },
       },
-    } as unknown as SessionEvent)
+    })
     test.emitSession(stepEnd())
-    expect(test.parsed().at(-1)).toMatchObject({ usage: { inputTokens: 5, outputTokens: 1 } })
+    expect(test.parsed().at(-1)).toEqual({ type: 'status', phase: 'step_end', turn: 1, step: 1 })
   })
 
   it('omits the step total when a later attempt reports no usage sample', () => {
@@ -397,8 +418,8 @@ describe('--json projection', () => {
     const test = harness()
     test.emitSession({
       type: 'assistant/attempt',
-      data: { turn: 1, step: 1, stream: [] },
-    } as unknown as SessionEvent)
+      data: { turn: 1, step: 1 },
+    })
     test.emitSession(assistantMessage([{ type: 'text', text: 'ok' }], { inputTokens: 1, outputTokens: 1 }))
     test.emitSession(stepEnd())
     expect(test.parsed().at(-1)).toEqual({ type: 'status', phase: 'step_end', turn: 1, step: 1 })

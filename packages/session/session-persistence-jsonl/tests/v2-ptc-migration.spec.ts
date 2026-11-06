@@ -2,7 +2,7 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionFormatEvent } from '@deepseek-ai/dsh-session-format'
+import type { SessionFormatEvent, SessionFormatJsonValue } from '@deepseek-ai/dsh-session-format'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
@@ -160,6 +160,11 @@ describe('JSONL V2 PTC publication and restore', () => {
       .map((row): unknown => JSON.parse(row))
     expect(publishedHeader).toEqual({ ...header, version: SESSION_FORMAT_VERSION })
     const expectedEvents: SessionFormatEvent[] = events.map(event => ({ ...event, seq: event.seq < 2 ? event.seq : event.seq + 1 }))
+    const releaseSettlement = events[3]?.data as { turn: number; step: number; message: SessionFormatJsonValue }
+    expectedEvents[3] = { ...expectedEvents[3], data: {
+      turn: releaseSettlement.turn, step: releaseSettlement.step,
+      message: releaseSettlement.message, firstTokenTime: 1004,
+    } } as SessionFormatEvent
     expectedEvents[5] = { ...expectedEvents[5], type: 'tool/ptc-dispatch-start' } as SessionFormatEvent
     expectedEvents[6] = { ...expectedEvents[6], type: 'tool/ptc-dispatch' } as SessionFormatEvent
     expectedEvents[7] = { ...expectedEvents[7], data: { turn: 1, step: 1, message: currentToolMessage } } as SessionFormatEvent

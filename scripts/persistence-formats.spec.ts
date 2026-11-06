@@ -284,6 +284,12 @@ describe('complete persistence format references', () => {
     expect(() => loadPersistenceFormats(root)).toThrow('invalid source tag')
   })
 
+  it('accepts a personal-distribution fork tag as its historical source', () => {
+    const root = fixture()
+    editPair(root, 0, 'tag: dsh-v0.1.0-rc.5', 'tag: fork-v0.2.2-rc.1-411e40692')
+    expect(() => loadPersistenceFormats(root)).not.toThrow()
+  })
+
   it.each(['missing', 'extra', 'wrong-digest'])('rejects a %s recorded root', (variant) => {
     const root = fixture()
     const digest = inventory(1).roots[0]!.digest

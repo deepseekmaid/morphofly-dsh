@@ -1,38 +1,34 @@
 import { describe, expect, it } from 'vitest'
+import { createAssistantMessage, createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { AssistantOutputFold, finalAssistantOutput } from '../src/assistant-output.ts'
 
-function message(content: ContentBlock[]): SessionEvent {
-  return { type: 'assistant/message', data: { stream: [], message: { content } } } as unknown as SessionEvent
-}
-
-function textDelta(text: string): SessionEvent {
+function message(content: ContentBlock[]): SessionEvent<'assistant/message'> {
   return {
-    type: 'assistant/attempt',
-    data: { stream: [{ type: 'text-chunks', time0: 0, index: 0, dt: [], texts: [text] }] },
-  } as unknown as SessionEvent
-}
-
-function reasoningDelta(text: string): SessionEvent {
-  return {
-    type: 'assistant/attempt',
-    data: { stream: [{ type: 'reasoning-chunks', time0: 0, index: 0, dt: [], texts: [text] }] },
-  } as unknown as SessionEvent
-}
-
-function toolResult(text: string): SessionEvent {
-  return {
-    type: 'tool/result',
+    type: 'assistant/message', seq: SessionSeq(0), time: 0, surfaceOp: 'append',
     data: {
-      message: {
-        role: 'tool',
-        toolCallId: 'call-1',
-        content: [{ type: 'text', text }],
-        isError: false,
-      },
+      turn: 1, step: 1,
+      message: createAssistantMessage({ content, source: { provider: 'test', model: 'test' } }),
     },
-  } as unknown as SessionEvent
+  }
+}
+
+function discardedAttempt(): SessionEvent<'assistant/attempt'> {
+  return { type: 'assistant/attempt', seq: SessionSeq(0), time: 0, data: { turn: 1, step: 1 } }
+}
+
+function toolResult(text: string): SessionEvent<'tool/result'> {
+  return {
+    type: 'tool/result', seq: SessionSeq(0), time: 0, surfaceOp: 'append',
+    data: {
+      turn: 1, step: 1,
+      message: createToolResultMessage({
+        callId: ToolCallId('call-1'), isError: false, content: [{ type: 'text', text }],
+      }),
+    },
+  }
 }
 
 describe('finalAssistantOutput', () => {
@@ -45,43 +41,45 @@ describe('finalAssistantOutput', () => {
     expect(finalAssistantOutput(events)).toEqual([{ type: 'text', text: 'step two' }])
   })
 
-  it('prefers a non-empty message over text streamed before and after it', () => {
-    const events = [
-      textDelta('earlier partial'),
-      message([{ type: 'text', text: 'complete answer' }]),
-      textDelta('later partial'),
-      message([]),
-    ]
-    expect(finalAssistantOutput(events)).toEqual([{ type: 'text', text: 'complete answer' }])
-  })
-
   it('treats textless assistant content as a non-empty message', () => {
     const content: ContentBlock[] = [{ type: 'reasoning', text: 'complete reasoning' }]
-    expect(finalAssistantOutput([
-      textDelta('streamed text'),
-      message(content),
-      textDelta('later partial'),
-    ])).toEqual(content)
+    expect(finalAssistantOutput([discardedAttempt(), message(content)])).toEqual(content)
   })
 
-  it('falls back to text deltas without including reasoning or tool-result content', () => {
+  it('ignores tool-result content and log-only attempts for the message selection', () => {
     const events = [
-      reasoningDelta('thinking'),
-      textDelta('partial '),
+      discardedAttempt(),
       toolResult('tool output'),
-      textDelta('answer'),
       message([]),
     ]
-    expect(finalAssistantOutput(events)).toEqual([{ type: 'text', text: 'partial answer' }])
+    expect(finalAssistantOutput(events)).toBeUndefined()
   })
 
-  it('returns undefined when the child produced neither messages nor text', () => {
+  it('returns undefined when the child produced no messages', () => {
     expect(finalAssistantOutput([])).toBeUndefined()
-    expect(finalAssistantOutput([reasoningDelta('thinking'), message([])])).toBeUndefined()
+    expect(finalAssistantOutput([discardedAttempt(), toolResult('tool output')])).toBeUndefined()
   })
 })
 
 describe('AssistantOutputFold', () => {
+  it('prefers a non-empty message over text accumulated before and after it', () => {
+    const fold = new AssistantOutputFold()
+    fold.pushText('earlier partial')
+    fold.push(message([{ type: 'text', text: 'complete answer' }]))
+    fold.pushText('later partial')
+    fold.push(message([]))
+    expect(fold.collect()).toEqual([{ type: 'text', text: 'complete answer' }])
+  })
+
+  it('falls back to text pushed outside session events', () => {
+    const fold = new AssistantOutputFold()
+    fold.push(discardedAttempt())
+    fold.pushText('partial ')
+    fold.push(toolResult('tool output'))
+    fold.pushText('answer')
+    expect(fold.collect()).toEqual([{ type: 'text', text: 'partial answer' }])
+  })
+
   it('folds raw text pieces into the same streamed fallback (ACP chunk transport)', () => {
     const fold = new AssistantOutputFold()
     fold.pushText('partial ')

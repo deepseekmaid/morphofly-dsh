@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { AssistantStreamAccumulator, createAssistantMessage, createUserMessage, createSystemMessage, ToolCallId, createMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createUserMessage, createSystemMessage, ToolCallId, createMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, Message, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import SessionStore, { Session, SessionId, SessionSeq, canonicalHeader } from '@deepseek-ai/dsh-session'
@@ -75,17 +75,7 @@ function appendSuccessfulCall(
   session.append('step/start', { turn, step })
   appendHeader(session, value)
 
-  const chunks = [
-    { type: 'block-start' as const, index: 0, blockType: 'text' as const },
-    { type: 'text-delta' as const, index: 0, text: providerText },
-    { type: 'block-end' as const, index: 0, block: { type: 'text' as const, text: providerText } },
-    ...options.usage === undefined ? [] : [{ type: 'usage' as const, usage: options.usage }],
-    { type: 'finish' as const, reason: { kind: 'stop' as const } },
-  ]
-  const accumulator = new AssistantStreamAccumulator()
-  for (const [index, chunk] of chunks.entries()) accumulator.push({ time: index, chunk })
   session.append('assistant/message', {
-    stream: [...accumulator.snapshot()],
     turn,
     step,
     message: createMessage({
@@ -299,7 +289,7 @@ describe('replay anchors and surface folds', () => {
     reasoningTokens: 6,
   }
 
-  it('uses disjoint provider usage and signed durable-output rewrites', () => {
+  it('uses disjoint provider usage without inventing a durable-output rewrite delta', () => {
     const service = meter()
     const session = Session.create(SessionId('usage'))
     session.append('user/message', createUserMessage({
@@ -313,8 +303,10 @@ describe('replay anchors and surface folds', () => {
     })
     const result = service.measure(session)
     expect(result.baseline).toMatchObject({ kind: 'usage', tokens: 34, usage: USAGE })
-    expect(result.surfaceDeltaTokens).toBeGreaterThan(0)
-    expect(result.totalTokens).toBe(34 + result.surfaceDeltaTokens)
+    // V5 keeps no provider stream beside the message, so the anchor prices the
+    // durable output itself and no earlier provider text remains to reprice.
+    expect(result.surfaceDeltaTokens).toBe(0)
+    expect(result.totalTokens).toBe(34)
     expect(() => {
       ;((result.baseline as { usage: { inputTokens: number } }).usage.inputTokens) = 1
     }).toThrow(TypeError)
@@ -476,7 +468,6 @@ describe('malformed replay and listener lifecycle', () => {
     const session = Session.create(SessionId('bad-step'))
     appendHeader(session, header('deepseek-v4-flash'))
     session.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({
@@ -497,7 +488,6 @@ describe('malformed replay and listener lifecycle', () => {
     const session = Session.create(SessionId('bad-step-surface'))
     appendHeader(session, header('deepseek-v4-flash'))
     session.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({
@@ -533,7 +523,6 @@ describe('malformed replay and listener lifecycle', () => {
     appendHeader(late, header('deepseek-v4-flash'))
     late.append('step/end', { turn: 1, step: 1 })
     late.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({
@@ -573,7 +562,6 @@ describe('malformed replay and listener lifecycle', () => {
       seq: SessionSeq(session.seq),
       time: 0,
       data: {
-        stream: [],
         turn: 1,
         step: 1,
         message: createMessage({

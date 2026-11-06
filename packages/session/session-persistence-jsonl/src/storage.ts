@@ -11,18 +11,22 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { errorChain } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import {
   assertContiguous,
   SessionAlreadyExistsError,
   materializeAppendBatch,
   SessionAlreadyOwnedError,
+  SessionAssistantStreamUnavailableError,
   SessionHandleClosedError,
   SessionPersistenceNotFoundError,
   SessionPersistenceRevision,
   SessionReadOnlyError,
 } from '@deepseek-ai/dsh-session-persistence'
 import type {
+  AssistantStreamRecords,
   SessionAccess,
   SessionHandle,
   SessionHandleAppendOptions,
@@ -35,14 +39,28 @@ import type { SessionWriteLease } from './lease.ts'
 /** Maximum intentional wait before a routed live session batch starts writing. */
 export const LIVE_WRITE_BATCH_MAX_DELAY_MS = 200
 
+/**
+ * Assistant streams carried beside one durable batch, keyed by the sequence of
+ * the event that settled each stream. The batch's sidecar files are published
+ * and fsynced before any of its log lines.
+ */
+export type AssistantStreamCarry = ReadonlyMap<SessionSeq, readonly AssistantStreamRecord[]>
+
+/** No Assistant streams accompany this write (explicit appends, recovered tails). */
+const NO_ASSISTANT_STREAMS: AssistantStreamCarry = new Map()
+
 /** The file-storage primitives the handle drives on its owning service. */
 export interface JsonlHandleStorage {
-  /** Append encoded lines; `isMaterialized` selects create-vs-extend publication. */
+  /**
+   * Append encoded lines; `isMaterialized` selects create-vs-extend publication.
+   * The sidecars for `assistantStreams` are published and fsynced first.
+   */
   persistBatch(
     header: SessionHeader,
     events: readonly SessionEvent[],
     isMaterialized: boolean,
     inheritedEventCount: SessionLogOffset,
+    assistantStreams: AssistantStreamCarry,
   ): Promise<void>
   /** Materialize the header-only artifact for an explicitly flushed empty session. */
   persistHeader(header: SessionHeader, inheritedEventCount: SessionLogOffset): Promise<void>
@@ -52,12 +70,29 @@ export interface JsonlHandleStorage {
   resolveCurrentLog(id: SessionId, signal?: AbortSignal): Promise<string | undefined>
   /** Read and validate the stored log at `path`, including its established event aliasing state. */
   readStoredLog(path: string, expectedId: SessionId, signal?: AbortSignal): Promise<SessionHandleReadResult>
+  /**
+   * Read the sidecar Assistant stream published beside the current generation.
+   * @returns the stored records, or `undefined` when the sequence has no sidecar.
+   */
+  readAssistantStream(header: SessionHeader, seq: SessionSeq, signal?: AbortSignal): Promise<AssistantStreamRecords | undefined>
+  /**
+   * Read one historical generation row's embedded Assistant stream without
+   * materializing its log.
+   * @returns the embedded records, or `undefined` when the row keeps none.
+   */
+  readEmbeddedAssistantStream(path: string, seq: SessionSeq, signal?: AbortSignal): Promise<AssistantStreamRecords | undefined>
   /** Whether the id is still a created-but-unmaterialized session here. */
   hasPendingSession(id: SessionId): boolean
   /** Acquire the session's cross-process write lock in its artifact directory. */
   acquireWriteLease(header: SessionHeader): Promise<SessionWriteLease>
   /** Drop the handle's bookkeeping on close. */
   releaseHandle(handle: JsonlSessionHandle, materialized: boolean): void
+}
+
+/** One routed live event plus the Assistant stream claimed beside it. */
+interface BufferedEvent {
+  readonly event: SessionEvent
+  readonly assistantStream?: readonly AssistantStreamRecord[] | undefined
 }
 
 /** Mutable per-handle log state; a write handle is its session's single mutator. */
@@ -74,6 +109,8 @@ export interface StorageHandleState {
   inheritedEventCount: SessionLogOffset
   /** The validated stored prefix from a write open, served to reads until the first append. */
   primed?: SessionHandleReadResult | undefined
+  /** Historical generation selected at read open; its rows still embed settlement streams. */
+  assistantStreamSource?: string | undefined
 }
 
 /**
@@ -87,7 +124,7 @@ export class JsonlSessionHandle implements SessionHandle {
   private closing: Promise<void> | undefined
   private observedLength = 0
   /** Routed live events awaiting their batching deadline (persistence-owned copies). */
-  private buffered: SessionEvent[] = []
+  private buffered: BufferedEvent[] = []
   private batchTimer: ReturnType<typeof setTimeout> | undefined
   /** Set when a drain failed; the automatic timer stays quiet until the next drain. */
   private drainPaused = false
@@ -180,6 +217,53 @@ export class JsonlSessionHandle implements SessionHandle {
   }
 
   /**
+   * Read the lossless Assistant stream settled by one event; see the handle
+   * contract. The sidecar is authoritative for current V5 generations, while a
+   * handle opened over a historical generation falls back to that generation's
+   * embedded row.
+   * @param seq - sequence of the settlement event.
+   * @param options - optional cancellation.
+   * @returns the compact records, or `undefined` when the sequence is not an
+   *   Assistant settlement or does not exist.
+   * @throws {SessionAssistantStreamUnavailableError} when the sequence is a
+   *   settlement whose stored stream is missing or unreadable.
+   */
+  async readAssistantStream(
+    seq: SessionSeq | number,
+    options?: SessionHandleReadOptions,
+  ): Promise<AssistantStreamRecords | undefined> {
+    this.assertOpen('readAssistantStream')
+    const value = SessionSeq(seq)
+    options?.signal?.throwIfAborted()
+    let stored: AssistantStreamRecords | undefined
+    try {
+      stored = await this.storage.readAssistantStream(this.header, value, options?.signal)
+    } catch (error: unknown) {
+      throw new SessionAssistantStreamUnavailableError(this.id, value, { cause: error })
+    }
+    if (stored !== undefined) return stored
+    const event = await this.observedEventAt(value, options)
+    if (event === undefined || !isAssistantSettlement(event.type)) return undefined
+    const source = this.state.assistantStreamSource
+    if (source !== undefined) {
+      try {
+        const embedded = await this.storage.readEmbeddedAssistantStream(source, value, options?.signal)
+        if (embedded !== undefined) return embedded
+      } catch (error: unknown) {
+        throw new SessionAssistantStreamUnavailableError(this.id, value, { cause: error })
+      }
+    }
+    throw new SessionAssistantStreamUnavailableError(this.id, value)
+  }
+
+  /** Locate one log event this handle can already serve without reading the whole log. */
+  private async observedEventAt(seq: SessionSeq, options?: SessionHandleReadOptions): Promise<SessionEvent | undefined> {
+    const primed = this.state.primed
+    if (primed !== undefined) return primed.events[seq]
+    return (await this.read(seq, 1, options)).events[0]
+  }
+
+  /**
    * Durably append a contiguous batch; see the seam contract.
    * @param events - the contiguous batch in seq order.
    * @param options - optional cancellation observed before the write starts.
@@ -191,7 +275,7 @@ export class JsonlSessionHandle implements SessionHandle {
     const batch = materializeAppendBatch(events)
     return this.run('append', async () => {
       options?.signal?.throwIfAborted()
-      await this.persistContiguous(batch)
+      await this.persistContiguous(batch, NO_ASSISTANT_STREAMS)
     })
   }
 
@@ -270,9 +354,18 @@ export class JsonlSessionHandle implements SessionHandle {
    * @param event - the live event, retained as a persistence-owned copy.
    * @param reportBackgroundFailure - observes a deadline-driven drain failure
    *   (the events stay buffered; the next {@link drainLive} retries loudly).
+   * @param assistantStream - the stream claimed from the producer's carrier;
+   *   omitted when the event carried none.
    */
-  enqueueLive(event: SessionEvent, reportBackgroundFailure: (error: unknown) => void): void {
-    this.buffered.push(structuredClone(event))
+  enqueueLive(
+    event: SessionEvent,
+    reportBackgroundFailure: (error: unknown) => void,
+    assistantStream?: readonly AssistantStreamRecord[],
+  ): void {
+    const retained = structuredClone(event)
+    this.buffered.push(assistantStream === undefined
+      ? { event: retained }
+      : { event: retained, assistantStream })
     if (this.batchTimer !== undefined || this.drainPaused) return
     this.batchTimer = setTimeout(() => {
       this.batchTimer = undefined
@@ -305,7 +398,7 @@ export class JsonlSessionHandle implements SessionHandle {
         // while-guard saw is still here when the chained turn runs.
         const batch = this.buffered.splice(0)
         try {
-          await this.persistContiguous(materializeAppendBatch(batch))
+          await this.persistContiguous(materializeAppendBatch(batch.map(slot => slot.event)), carriedStreams(batch))
         } catch (error: unknown) {
           this.buffered = batch.concat(this.buffered)
           this.drainPaused = true
@@ -316,7 +409,10 @@ export class JsonlSessionHandle implements SessionHandle {
   }
 
   /** The shared durable-append body: contiguity, ownership, torn-tail repair, storage write, state advance. */
-  private async persistContiguous(batch: readonly SessionEvent[]): Promise<void> {
+  private async persistContiguous(
+    batch: readonly SessionEvent[],
+    assistantStreams: AssistantStreamCarry,
+  ): Promise<void> {
     if (this.access !== 'write') throw new SessionReadOnlyError(this.id, 'append')
     if (batch.length === 0) return
     await this.ensureLease()
@@ -331,11 +427,23 @@ export class JsonlSessionHandle implements SessionHandle {
     }
     if (this.state.recoveredTail !== undefined) {
       if (this.state.recoveredTail.length > 0) {
-        await this.storage.persistBatch(this.header, this.state.recoveredTail, this.state.materialized, this.state.inheritedEventCount)
+        await this.storage.persistBatch(
+          this.header,
+          this.state.recoveredTail,
+          this.state.materialized,
+          this.state.inheritedEventCount,
+          NO_ASSISTANT_STREAMS,
+        )
       }
       this.state.recoveredTail = undefined
     }
-    await this.storage.persistBatch(this.header, batch, this.state.materialized, this.state.inheritedEventCount)
+    await this.storage.persistBatch(
+      this.header,
+      batch,
+      this.state.materialized,
+      this.state.inheritedEventCount,
+      assistantStreams,
+    )
     this.state.materialized = true
     this.state.cursor += batch.length
     this.state.primed = undefined
@@ -372,6 +480,20 @@ export class JsonlSessionHandle implements SessionHandle {
   private assertOpen(operation: string): void {
     if (this.closing !== undefined) throw new SessionHandleClosedError(this.id, operation)
   }
+}
+
+/** Whether one event type settles an Assistant stream that lives beside the log. */
+function isAssistantSettlement(type: SessionEvent['type']): boolean {
+  return type === 'assistant/message' || type === 'assistant/attempt'
+}
+
+/** Group one routed batch's claimed Assistant streams by the owning event sequence. */
+function carriedStreams(batch: readonly BufferedEvent[]): AssistantStreamCarry {
+  const streams = new Map<SessionSeq, readonly AssistantStreamRecord[]>()
+  for (const slot of batch) {
+    if (slot.assistantStream !== undefined) streams.set(slot.event.seq, slot.assistantStream)
+  }
+  return streams
 }
 
 /** One created-but-unmaterialized session tracked in this process only. */
@@ -547,9 +669,12 @@ export class JsonlBackendTracker {
         if (errors.length > 0) throw new AggregateError(errors, `${name} dispose failed`)
       }
       yield ctx.on('session/event', (session: Session, event) => {
+        // Claim during the append's synchronous dispatch: the carrier is not
+        // durable and is dropped once the append returns.
+        const assistantStream = session.takeAssistantStream(event.seq)
         writers.get(session.id)?.enqueueLive(event, (error) => {
           ctx.logger.warn(`session-persistence: background write for session "${session.id}" failed (buffered events retained): ${String(error)}`)
-        })
+        }, assistantStream)
       })
       yield ctx.on('session/flush', (session: Session) => {
         const writer = writers.get(session.id)

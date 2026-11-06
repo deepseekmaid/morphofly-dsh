@@ -52,7 +52,7 @@ describe.skipIf(MODE === 'record')('web e2e: subagent result notices', () => {
         session.append('step/start', { turn, step: 1 })
         session.append('user/message', message, { surfaceOp: 'append' })
         session.append('assistant/message', {
-          turn, step: 1, stream: [], message: createAssistantMessage({
+          turn, step: 1,  message: createAssistantMessage({
             content: [{ type: 'text', text: `Acknowledged ${turn}.` }], source: { provider: 'fixture', model: 'fixture' },
           }),
         }, { surfaceOp: 'append' })

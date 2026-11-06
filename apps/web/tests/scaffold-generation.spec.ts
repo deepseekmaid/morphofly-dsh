@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseSessionLog, prepareSessionSnapshotFixtureForComparison } from '@deepseek-ai/dsh-llm-replay'
+import {
+  parseSessionFixtureWithStreams,
+  parseSessionLog,
+  prepareSessionSnapshotFixtureForComparison,
+} from '@deepseek-ai/dsh-llm-replay'
 import {
   assertFixtureInventory,
   parseSeedFixture,
@@ -26,20 +30,21 @@ describe('Web seed stream timing', () => {
     expect(parseSeedFixture(current).events).toEqual(expected)
   })
 
-  it.each(['session.jsonl', 'session.v1.jsonl'])('reconstructs positive stream intervals from %s', async (filename) => {
+  it.each(['session.jsonl', 'session.v1.jsonl'])('keeps %s free of inline settlement streams while replay recovers them', async (filename) => {
     const fixture = await readFile(new URL(`../../../snapshots/session/text-turn/${filename}`, import.meta.url), 'utf8')
-    const messages = parseSeedFixture(fixture).events.filter(event => event.type === 'assistant/message')
-    expect(messages).toHaveLength(1)
-    const stream = messages[0]!.data.stream
-    expect(stream.length).toBeGreaterThan(1)
-
-    let previousEnd = -1
-    for (const record of stream) {
-      const start = 'time' in record ? record.time : record.time0
-      expect(start).toBeGreaterThan(previousEnd)
-      previousEnd = 'time' in record ? record.time : record.time0 + record.dt.reduce((total, delta) => total + delta, 0)
+    // V5 moved settlement streams beside the log: a seed keeps only logical
+    // events, whatever released generation the rows came from.
+    const seeded = parseSeedFixture(fixture).events
+    for (const event of seeded) {
+      if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') continue
+      expect(event.data).not.toHaveProperty('stream')
     }
-    expect(previousEnd).toBeGreaterThan(0)
+
+    // The released rows' streams stay recoverable for replay through the reader.
+    const replay = parseSessionFixtureWithStreams(fixture)
+    const settlement = replay.events.find(event => event.type === 'assistant/message')
+    if (settlement === undefined) throw new Error(`${filename} has no Assistant settlement`)
+    expect(replay.readAssistantStream(settlement)?.length).toBeGreaterThan(1)
   })
 })
 

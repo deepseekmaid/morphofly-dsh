@@ -9,7 +9,7 @@ import { performance } from 'node:perf_hooks'
 import type { Browser, CDPSession, Locator, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord, StreamChunk, TimedStreamChunk } from '@deepseek-ai/dsh-llm'
 import {
   ToolCallId,
   createAssistantMessage,
@@ -221,7 +221,6 @@ function appendAssistant(
   body: string,
 ): void {
   session.append('assistant/message', {
-    stream: [],
     turn,
     step,
     message: createAssistantMessage({
@@ -253,7 +252,6 @@ function appendToolStep(
   })
 
   session.append('assistant/message', {
-    stream: [],
     turn,
     step,
     message: createAssistantMessage({
@@ -992,11 +990,7 @@ async function continueConversation(
     const streamAfter = await chromiumMetrics(cdp)
     const mutations = await stopMutationProbe(world.page)
     const turnEvents = world.sessionEvents.slice(eventStart)
-    const chunks = turnEvents.flatMap(event => (
-      event.type === 'assistant/message' || event.type === 'assistant/attempt'
-        ? expandAssistantStream(event.data.stream)
-        : []
-    ))
+    const chunks = await settlementChunks(world.scaffold, settledSessionId, turnEvents)
     const toolCalls = turnEvents.filter(event => event.type === 'tool/call')
     const toolResults = turnEvents.filter(event => event.type === 'tool/result')
     const toolTurn = spec.toolResultMarker !== undefined
@@ -1114,11 +1108,7 @@ async function measurePostSoakUserRender(
   const fullTurnMs = performance.now() - fullTurnStarted
 
   const turnEvents = world.sessionEvents.slice(eventStart)
-  const chunks = turnEvents.flatMap(event => (
-    event.type === 'assistant/message' || event.type === 'assistant/attempt'
-      ? expandAssistantStream(event.data.stream)
-      : []
-  ))
+  const chunks = await settlementChunks(world.scaffold, settledSessionId, turnEvents)
   const user = turnEvents.find(
     event => event.type === 'user/message' && event.data.source.kind === 'user',
   )
@@ -1147,6 +1137,25 @@ async function measurePostSoakUserRender(
     browserAfterPaintSample,
     fullTurnMs: rounded(fullTurnMs),
     persistedChunks: chunks.length,
+  }
+}
+
+/** Expand the Assistant streams V5 stores beside the log for one turn's settlements. */
+async function settlementChunks(
+  scaffold: WebScaffold,
+  sessionId: SessionId,
+  settlements: readonly SessionEvent[],
+): Promise<readonly TimedStreamChunk[]> {
+  const handle = await scaffold.ctx.sessionPersistence.open(sessionId, 'read')
+  try {
+    const records: AssistantStreamRecord[] = []
+    for (const event of settlements) {
+      if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') continue
+      records.push(...await handle.readAssistantStream?.(event.seq) ?? [])
+    }
+    return expandAssistantStream(records)
+  } finally {
+    await handle.close()
   }
 }
 

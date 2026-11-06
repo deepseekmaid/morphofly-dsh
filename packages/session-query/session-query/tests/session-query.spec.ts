@@ -1006,7 +1006,6 @@ describe('session-query exact reads', () => {
     session.append('assistant/attempt', {
       turn: 1,
       step: 1,
-      stream: [{ type: 'text-chunks', time0: 0, index: 0, dt: [], texts: ['draft'] }],
     })
     session.append(
       'user/message',
@@ -1034,7 +1033,6 @@ describe('session-query exact reads', () => {
     session.append('assistant/attempt', {
       turn: 1,
       step: 1,
-      stream: [{ type: 'text-chunks', time0: 0, index: 0, dt: [], texts: ['draft'] }],
     })
     session.append(
       'user/message',
@@ -1060,7 +1058,6 @@ describe('session-query exact reads', () => {
     session.append(
       'assistant/message',
       {
-        stream: [],
         turn: 2, step: 1,
         message: createMessage({
           role: 'assistant',

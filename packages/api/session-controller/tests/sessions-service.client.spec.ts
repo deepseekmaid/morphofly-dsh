@@ -213,7 +213,6 @@ describe('scope tree', () => {
             source: { kind: 'model', provider: 'p', model: 'm' },
             id: 'message-1',
           },
-          stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['live'] }],
         },
         surfaceOp: 'append' as const,
       },
@@ -337,7 +336,6 @@ describe('scope tree', () => {
             source: { kind: 'model', provider: 'p', model: 'm' },
             id: 'prior-attempt-message',
           },
-          stream: [{ type: 'text-chunks', time0: 10, index: 0, dt: [], texts: ['retry '] }],
         },
         surfaceOp: 'append' as const,
       },
@@ -355,7 +353,6 @@ describe('scope tree', () => {
             source: { kind: 'model', provider: 'p', model: 'm' },
             id: 'current-attempt-message',
           },
-          stream: [{ type: 'text-chunks', time0: 20, index: 0, dt: [], texts: ['settled'] }],
         },
         surfaceOp: 'append' as const,
       },
@@ -373,7 +370,7 @@ describe('scope tree', () => {
         turn: 1,
         step: 1,
         nextIndex: 1,
-        stream: currentMessage.event.data.stream,
+        stream: [{ type: 'text-chunks', time0: 20, index: 0, dt: [], texts: ['settled'] }],
       },
     }
     b.mock.stream(FOLLOW, followScript(history, { assistantStream: assistantStreamBaseline }))
@@ -433,7 +430,6 @@ describe('scope tree', () => {
             source: { kind: 'model', provider: 'p', model: 'm' },
             id: 'current-attempt-message',
           },
-          stream: [{ type: 'text-chunks', time0: 20, index: 0, dt: [], texts: ['settled'] }],
         },
         surfaceOp: 'append' as const,
       },
@@ -447,7 +443,7 @@ describe('scope tree', () => {
         turn: 1,
         step: 1,
         nextIndex: 1,
-        stream: message.event.data.stream,
+        stream: [{ type: 'text-chunks', time0: 20, index: 0, dt: [], texts: ['settled'] }],
       },
     }
     b.mock.stream(FOLLOW, followScript(

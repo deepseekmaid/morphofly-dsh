@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { Session, SessionId, SessionLogOffset, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
-import { sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
+import { Session, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import { restoreV4AsCurrentSessionInputs, v4SessionFormatCatalog as sessionFormatCatalog } from './v4-target-catalog.ts'
 import type { SessionFormatEvent } from '@deepseek-ai/dsh-session-format'
 
 type Row = { type: string; data: Record<string, unknown>; surfaceOp?: unknown; sourceEventSeqs?: number[]; ignorable?: true }
@@ -31,7 +31,8 @@ function reopen(rows: readonly Row[], inherited = 0, seeded = false) {
   }
   const artifact = restore.finish()
   expect(artifact.inheritedEventCount).toBe(inherited)
-  const session = Session.fromRestore(SessionId(artifact.header.id), artifact.events as SessionEvent[], artifact.header as unknown as SessionHeader, SessionLogOffset(inherited), 'detached')
+  const current = restoreV4AsCurrentSessionInputs(artifact)
+  const session = Session.fromRestore(current.header.id, current.events, current.header, SessionLogOffset(current.inheritedEventCount), 'detached')
   return { artifact, messages: session.deriveMessages() }
 }
 

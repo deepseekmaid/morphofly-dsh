@@ -83,13 +83,6 @@ const delta: StreamChunk = { type: 'text-delta', index: 0, text: 'x' }
 /** Usage reported by one assistant message. */
 const usage = { inputTokens: 100, outputTokens: 40, cacheReadTokens: 400, cacheWriteTokens: 100 }
 
-/** A compact assistant stream whose first token arrives `at` milliseconds. */
-function stream(at: number): readonly { readonly type: 'chunk'; readonly time: number; readonly chunk: StreamChunk }[] {
-  return [
-    { type: 'chunk', time: at - 100, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-    { type: 'chunk', time: at, chunk: delta },
-  ]
-}
 
 /** A definition registry over the Definitions captured from registration. */
 class TestEventDefinitions {
@@ -597,7 +590,7 @@ describe('conversation Definitions', () => {
         turn: 1,
         step: 1,
         message: { id: 'm1', role: 'assistant', content: [], source: { provider: 'p', model: 'm' } },
-        stream: stream(2_300),
+        firstTokenTime: 2_300,
         usage,
       }, 2_400)),
       entry(event('tool/call', {
@@ -645,7 +638,7 @@ describe('conversation Definitions', () => {
         turn: 575,
         step: 1,
         message: { id: 'm', role: 'assistant', content: [], source: { provider: 'p', model: 'm' } },
-        stream: stream(8_200),
+        firstTokenTime: 8_200,
       }, 8_200)),
       // Compaction restores a pruned result under its original (unloaded) turn.
       entry(event('tool/result', {
@@ -666,7 +659,7 @@ describe('conversation Definitions', () => {
         turn: 4,
         step: 1,
         message: { id: 'm2', role: 'assistant', content: [], source: { provider: 'p', model: 'm' } },
-        stream: stream(7_300),
+        firstTokenTime: 7_300,
         usage,
       }, 7_400)),
       entry(event('tool/call', {
@@ -881,7 +874,7 @@ describe('conversation Definitions', () => {
       kind: 'model-retry', turn: 3, step: 2, provider: 'p', status: 'normal', retry: 2, delayMs: 1_500,
       error: 'rate limited',
     })
-    expect(eventMetrics(event('assistant/attempt', { turn: 3, step: 2, stream: [] }), undefined)).toMatchObject({
+    expect(eventMetrics(event('assistant/attempt', { turn: 3, step: 2 }), undefined)).toMatchObject({
       kind: 'model-attempt', turn: 3, step: 2, status: 'attempt',
     })
     expect(eventMetrics(surfaceEvent('user/message', {
@@ -940,7 +933,7 @@ describe('conversation Definitions', () => {
             turn: 6,
             step: 1,
             message: { id: 'm3', role: 'assistant', content: [], source: { provider: 'p', model: 'm' } },
-            stream: stream(9_300),
+            firstTokenTime: 9_300,
             usage,
           }, 9_400)),
           entry(event('step/end', { turn: 6, step: 1 }, 9_500)),
@@ -1156,7 +1149,7 @@ describe('conversation Definitions', () => {
       turn: 11,
       step: 2,
       message: { id: 'm', role: 'assistant', content: [], source: { provider: 'p', model: 'm' } },
-      stream: stream(11_300),
+      firstTokenTime: 11_300,
       usage,
     }, 11_400))
     const state = step.start(

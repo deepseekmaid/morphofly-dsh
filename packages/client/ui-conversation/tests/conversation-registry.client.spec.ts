@@ -426,7 +426,6 @@ describe('Conversation registries', () => {
             content: [],
             source: { provider: 'test', model: 'test' },
           }),
-          stream: [],
         },
         surfaceOp: 'append',
       },

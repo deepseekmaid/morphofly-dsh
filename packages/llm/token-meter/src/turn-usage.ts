@@ -1,4 +1,3 @@
-import { lastAssistantStreamChunk } from '@deepseek-ai/dsh-llm/assistant-stream'
 import type { AssistantMessage, TokenUsage } from '@deepseek-ai/dsh-llm/types'
 import type {} from '@deepseek-ai/dsh-llm-retry/types'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
@@ -72,10 +71,6 @@ function safeSum(values: readonly number[]): number | undefined {
 function messageRoute(message: AssistantMessage): TurnTokenUsageRoute | undefined {
   const { provider, model } = message.source
   return provider.length > 0 && model.length > 0 ? { provider, model } : undefined
-}
-
-function streamUsage(stream: SessionEvent<'assistant/message'>['data']['stream']): TokenUsage | undefined {
-  return lastAssistantStreamChunk(stream, 'usage')?.usage
 }
 
 function normalizeUsage(usage: TokenUsage, route?: TurnTokenUsageRoute): NormalizedAttempt | undefined {
@@ -230,7 +225,7 @@ export function deriveTurnTokenUsage(events: readonly SessionEvent[]): TurnToken
         invalid = true
         continue
       }
-      const sample: TokenUsage | undefined = streamUsage(event.data.stream) ?? state.sample
+      const sample: TokenUsage | undefined = event.data.usage ?? state.sample
       state = { kind: 'open', turn, step: event.data.step, ...(sample === undefined ? {} : { sample }) }
       if (!closeOpen()) invalid = true
       else state = { kind: 'finishClosed', turn, step: event.data.step }
@@ -243,7 +238,7 @@ export function deriveTurnTokenUsage(events: readonly SessionEvent[]): TurnToken
         invalid = true
         continue
       }
-      const sample = event.data.usage ?? streamUsage(event.data.stream)
+      const sample = event.data.usage
       if (sample !== undefined) state = { ...state, sample }
       if (!closeOpen(messageRoute(event.data.message))) invalid = true
       else state = { kind: 'settled', turn, step: event.data.step, by: 'message' }

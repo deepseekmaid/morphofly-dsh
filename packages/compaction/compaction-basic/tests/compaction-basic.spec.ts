@@ -139,7 +139,6 @@ function conversation(turns = 4, text = 'fixture '.repeat(40).trim(), system?: s
       })
     }
     session.append('assistant/message', {
-      stream: [],
       turn,
       step: 1,
       message: createMessage({
@@ -177,7 +176,6 @@ function toolConversation(): Session {
       })
     }
     session.append('assistant/message', {
-      stream: [],
       turn,
       step: 1,
       message: createMessage({
@@ -226,7 +224,6 @@ function oversizedToolResult(chars = 3_000, withCompactablePrompt = false): Sess
     reason: 'initial',
   })
   session.append('assistant/message', {
-    stream: [],
     turn: 1,
     step: 1,
     message: createMessage({
@@ -716,7 +713,6 @@ describe('pressure measurement and retention', () => {
       reason: 'initial',
     })
     session.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({
@@ -914,7 +910,6 @@ describe('pressure measurement and retention', () => {
     session.append('turn/start', { turn: 1 })
     session.append('step/start', { turn: 1, step: 1 })
     session.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({
@@ -1301,7 +1296,6 @@ describe('compaction region transaction', () => {
     }), { surfaceOp: 'append' })
     session.append('step/start', { turn: 1, step: 1 })
     session.append('assistant/message', {
-      stream: [],
       turn: 1,
       step: 1,
       message: createMessage({
@@ -2463,7 +2457,6 @@ describe('route-priced image pressure', () => {
         })
       }
       session.append('assistant/message', {
-        stream: [],
         turn,
         step: 1,
         message: createMessage({

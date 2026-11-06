@@ -20,7 +20,7 @@ export function continuationTurn(reason: TurnEndReason, number = 1): { type: 'ev
       data: createUserMessage({ content: [{ type: 'text', text: 'task' }], source: { kind: 'user' } }),
     } },
     { type: 'event', event: {
-      type: 'assistant/attempt', seq: SessionSeq(offset + 3), time: 0, data: { turn: number, step: 1, stream: [] },
+      type: 'assistant/attempt', seq: SessionSeq(offset + 3), time: 0, data: { turn: number, step: 1 },
     } },
     { type: 'event', event: { type: 'step/end', seq: SessionSeq(offset + 4), time: 0, data: { turn: number, step: 1 } } },
     { type: 'event', event: { type: 'turn/end', seq: SessionSeq(offset + 5), time: 0, data: { turn: number, reason } } },

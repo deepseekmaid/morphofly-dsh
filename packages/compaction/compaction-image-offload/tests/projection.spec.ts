@@ -132,7 +132,7 @@ describe('durable image selections', () => {
     })
     expect(() => session.append('image/offload', { targets: [{ seq: source.seq, imageIndexes: [1] }] })).toThrow(/not a current/)
     const assistant = session.append('assistant/message', {
-      turn: 1, step: 1, stream: [],
+      turn: 1, step: 1,
       message: createAssistantMessage({ content: [image], source: { provider: 'mock', model: 'mock' } }),
     }, { surfaceOp: 'append' })
     expect(() => session.append('image/offload', { targets: [{ seq: assistant.seq, imageIndexes: [0] }] })).toThrow(/must be user\/message/)

@@ -79,12 +79,7 @@ export function oneTurnLog(): SessionEvent[] {
           ...{ provider: 'mock', model: 'mock' },
         },
       }),
-      stream: [
-        { type: 'chunk', time: 3, chunk: { type: 'block-start', index: 0, blockType: 'text' } },
-        { type: 'text-chunks', time0: 3, index: 0, dt: [], texts: ['hello'] },
-        { type: 'chunk', time: 4, chunk: { type: 'block-end', index: 0, block: { type: 'text', text: 'hello' } } },
-        { type: 'chunk', time: 4, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-      ],
+      firstTokenTime: 3,
     }, surfaceOp: 'append' },
     { type: 'step/end', seq: SessionSeq(4), time: 5, data: { turn: 1, step: 1 } },
     { type: 'turn/end', seq: SessionSeq(5), time: 6, data: { turn: 1, reason: { kind: 'completed' } } },

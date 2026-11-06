@@ -5,7 +5,7 @@ composition: office-render-tools
 recording: authored
 sessionFormat:
   version: 4
-  coverage: [retired-tools]
+  coverage: [adjacent-migration]
 header:
   class: office-render-tools
 workspace:

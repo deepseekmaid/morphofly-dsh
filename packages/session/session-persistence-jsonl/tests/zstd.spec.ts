@@ -480,9 +480,11 @@ describe('JsonlSessionPersistence: default Zstandard encoding', () => {
       .map(line => (JSON.parse(line) as { type: string }).type)
     expect(recordTypes).not.toContain('text-chunks')
     const assistant = plaintext.trimEnd().split('\n')
-      .map(line => JSON.parse(line) as { type: string; data?: { stream?: Array<{ type: string }> } })
+      .map(line => JSON.parse(line) as { type: string; data?: { firstTokenTime?: number; stream?: unknown } })
       .find(record => record.type === 'assistant/message')
-    expect(assistant?.data?.stream?.some(record => record.type === 'text-chunks')).toBe(true)
+    // V5 settlements keep scalar timing in the log; the compact stream lives in the sidecar.
+    expect(assistant?.data?.firstTokenTime).toBe(3)
+    expect(Object.hasOwn(assistant?.data ?? {}, 'stream')).toBe(false)
     expect((await readAll(backend, header.id)).events).toEqual(events)
   })
 
@@ -604,18 +606,20 @@ describe('JsonlSessionPersistence: default Zstandard encoding', () => {
     const openTurn: SessionEvent[] = [
       { type: 'turn/start', seq: SessionSeq(6), time: 7, data: { turn: 2 } },
       { type: 'step/start', seq: SessionSeq(7), time: 8, data: { turn: 2, step: 1 } },
-      {
-        type: 'assistant/attempt',
-        seq: SessionSeq(8),
-        time: 9,
-        data: {
-          turn: 2,
-          step: 1,
-          stream: [{ type: 'text-chunks', time0: 9, index: 0, dt: [], texts: [deterministicNoise(300_000)] }],
-        },
-      },
     ]
-    const plaintext = openTurn.map(e => JSON.stringify(e)).join('\n') + '\n'
+    // The released-shape torn row never becomes a committed event; only its
+    // leading bytes must reach the durable fragment.
+    const tornRow = {
+      type: 'assistant/attempt',
+      seq: 8,
+      time: 9,
+      data: {
+        turn: 2,
+        step: 1,
+        stream: [{ type: 'text-chunks', time0: 9, index: 0, dt: [], texts: [deterministicNoise(300_000)] }],
+      },
+    }
+    const plaintext = [...openTurn, tornRow].map(e => JSON.stringify(e)).join('\n') + '\n'
     await appendFile(path, await tornFrame(plaintext, (decoded) => {
       const newlines = decoded.match(/\n/g)?.length ?? 0
       return newlines >= 2 && !decoded.endsWith('\n')
@@ -655,18 +659,20 @@ describe('JsonlSessionPersistence: default Zstandard encoding', () => {
     const recovered: SessionEvent[] = [
       { type: 'turn/start', seq: SessionSeq(6), time: 7, data: { turn: 2 } },
       { type: 'step/start', seq: SessionSeq(7), time: 8, data: { turn: 2, step: 1 } },
-      {
-        type: 'assistant/attempt',
-        seq: SessionSeq(8),
-        time: 9,
-        data: {
-          turn: 2,
-          step: 1,
-          stream: [{ type: 'text-chunks', time0: 9, index: 0, dt: [], texts: [deterministicNoise(300_000)] }],
-        },
-      },
     ]
-    await appendFile(path, await tornFrame(recovered.map(e => JSON.stringify(e)).join('\n') + '\n', (decoded) => {
+    // The released-shape torn row never becomes a committed event; only its
+    // leading bytes must reach the durable fragment.
+    const tornRow = {
+      type: 'assistant/attempt',
+      seq: 8,
+      time: 9,
+      data: {
+        turn: 2,
+        step: 1,
+        stream: [{ type: 'text-chunks', time0: 9, index: 0, dt: [], texts: [deterministicNoise(300_000)] }],
+      },
+    }
+    await appendFile(path, await tornFrame([...recovered, tornRow].map(e => JSON.stringify(e)).join('\n') + '\n', (decoded) => {
       const newlines = decoded.match(/\n/g)?.length ?? 0
       return newlines >= 2 && !decoded.endsWith('\n')
     }))

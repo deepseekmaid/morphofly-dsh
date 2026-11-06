@@ -98,7 +98,7 @@ function appendAssistantMessage(
   turn: number,
   step: number,
   texts: readonly string[],
-  time0 = 100,
+  firstTokenTime?: number,
 ): void {
   session.append('assistant/message', {
     turn,
@@ -107,10 +107,7 @@ function appendAssistantMessage(
       content: [{ type: 'text', text: texts.join('') }],
       source: { provider: 'mock', model: 'mock' },
     }),
-    stream: [
-      { type: 'text-chunks', time0, index: 0, dt: texts.slice(1).map(() => 5), texts: [...texts] },
-      { type: 'chunk', time: time0 + Math.max(0, texts.length - 1) * 5, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-    ],
+    ...firstTokenTime === undefined ? {} : { firstTokenTime },
   }, { surfaceOp: 'append' })
 }
 
@@ -215,32 +212,27 @@ describe('SessionTelemetryCoordinator capture', () => {
     expect(record.body).toEqual({ payload: { nested: ['a', 'b'] } })
   })
 
-  it('ships every assistant stream in canonical order with its complete body', async () => {
+  it('ships every assistant settlement in canonical order with its complete body', async () => {
     const { ctx, backend } = await setup()
     const a = liveSession(ctx, 'a')
     const b = liveSession(ctx, 'b')
     appendAssistantMessage(a, 1, 1, ['a11-first', 'a11-second'], 110)
     appendAssistantMessage(a, 1, 2, ['a12-first'], 120)
     appendAssistantMessage(b, 1, 1, ['b11-first', 'b11-second'], 210)
-    const shipped = backend.ledger().map(r => [
-      r.attributes['session.id'],
-      r.attributes['event.seq'],
-      (r.body as SessionEvent<'assistant/message'>['data']).stream,
-    ])
-    expect(shipped).toEqual([
-      ['a', 0, [
-        { type: 'text-chunks', time0: 110, index: 0, dt: [5], texts: ['a11-first', 'a11-second'] },
-        { type: 'chunk', time: 115, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-      ]],
-      ['a', 1, [
-        { type: 'text-chunks', time0: 120, index: 0, dt: [], texts: ['a12-first'] },
-        { type: 'chunk', time: 120, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-      ]],
-      ['b', 0, [
-        { type: 'text-chunks', time0: 210, index: 0, dt: [5], texts: ['b11-first', 'b11-second'] },
-        { type: 'chunk', time: 215, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-      ]],
-    ])
+    const shipped = backend.ledger().map(r => ({
+      id: r.attributes['session.id'],
+      seq: r.attributes['event.seq'],
+      body: r.body as SessionEvent<'assistant/message'>['data'],
+    }))
+    expect(shipped.map(({ id, seq }) => [id, seq])).toEqual([['a', 0], ['a', 1], ['b', 0]])
+    expect(shipped.map(({ body }) => body.firstTokenTime)).toEqual([110, 120, 210])
+    expect(shipped.map(({ body }) => body.message.content[0]))
+      .toMatchObject([
+        { type: 'text', text: 'a11-firsta11-second' },
+        { type: 'text', text: 'a12-first' },
+        { type: 'text', text: 'b11-firstb11-second' },
+      ])
+    expect(shipped.every(({ body }) => Object.hasOwn(body, 'stream') === false)).toBe(true)
   })
 })
 
@@ -263,10 +255,6 @@ describe('SessionTelemetryCoordinator on-demand capture', () => {
     ])
     expect(backend.ledger().map(record => record.attributes['event.seq'])).toEqual([0, 1, 2])
     expect(backend.ledger()[2]!.body).toMatchObject({
-      stream: [
-        { type: 'text-chunks', time0: 100, index: 0, dt: [], texts: ['first'] },
-        { type: 'chunk', time: 100, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-      ],
     })
 
     expect(backend.ledger()).toHaveLength(3)
@@ -281,10 +269,6 @@ describe('SessionTelemetryCoordinator on-demand capture', () => {
     ])
     expect(backend.ledger().map(record => record.attributes['event.seq'])).toEqual([0, 1, 2, 3, 4])
     expect(backend.ledger()[3]!.body).toMatchObject({
-      stream: [
-        { type: 'text-chunks', time0: 200, index: 0, dt: [], texts: ['second'] },
-        { type: 'chunk', time: 200, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-      ],
     })
   })
 
@@ -439,7 +423,7 @@ describe('SessionTelemetryCoordinator adoption', () => {
       appendTurn(parent)
       parent.append('step/start', { turn: 1, step: 1 })
       parent.append('assistant/message', {
-        turn: 1, step: 1, stream: [],
+        turn: 1, step: 1,
         message: createAssistantMessage({
           content: [{ type: 'tool-call', id: ToolCallId('fork-call'), name: 'bash', arguments: '{}' }],
           source: { provider: 'mock', model: 'mock' },
@@ -542,10 +526,10 @@ describe('SessionTelemetryCoordinator adoption', () => {
     appendAssistantMessage(resumed, 1, 1, ['continuation'], 200)
     appendAssistantMessage(resumed, 1, 2, ['next step'], 300)
     expect(ofResumed().map(r => r.attributes['event.seq'])).toEqual([2, 3, 4])
-    expect(ofResumed().map(r => (r.body as { stream?: { type: string; texts?: string[] }[] }).stream?.[0]?.texts)).toEqual([
+    expect(ofResumed().map(r => (r.body as { firstTokenTime?: number }).firstTokenTime)).toEqual([
       undefined,
-      ['continuation'],
-      ['next step'],
+      200,
+      300,
     ])
   })
 

@@ -902,7 +902,7 @@ describe('web e2e: seeded history renders through cold resume', () => {
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
     const message = session.append('assistant/message', {
-      turn, step: 1, stream: [],
+      turn, step: 1,
       message: createMessage({
         role: 'assistant',
         source: { kind: 'model', provider: 'fixture', model: 'fixture' },

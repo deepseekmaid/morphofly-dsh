@@ -36,7 +36,7 @@ function layoutFixture(): string {
   session.append('step/start', { turn: 1, step: 1 })
   const namedCalls = calls.map((call, index) => ({ ...call, id: ToolCallId(`layout-${index}`), arguments: JSON.stringify(call.args) }))
   session.append('assistant/message', {
-    stream: [], turn: 1, step: 1,
+    turn: 1, step: 1,
     message: createAssistantMessage({
       content: namedCalls.map(call => ({ type: 'tool-call', id: call.id, name: call.name, arguments: call.arguments })),
       source: { provider: 'fixture', model: 'fixture' },
@@ -52,7 +52,7 @@ function layoutFixture(): string {
   session.append('step/end', { turn: 1, step: 1 })
   session.append('step/start', { turn: 1, step: 2 })
   session.append('assistant/message', {
-    stream: [], turn: 1, step: 2,
+    turn: 1, step: 2,
     message: createAssistantMessage({
       content: [{ type: 'text', text: 'CODE_LAYOUT_DONE' }], source: { provider: 'fixture', model: 'fixture' },
     }),

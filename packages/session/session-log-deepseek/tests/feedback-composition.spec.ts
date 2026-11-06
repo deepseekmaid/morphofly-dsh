@@ -88,7 +88,7 @@ it('uploads freeform feedback and message put/edit/delete through the unchanged 
     session.append('turn/start', { turn: 1 })
     session.append('step/start', { turn: 1, step: 1 })
     session.append('user/message', user, { surfaceOp: 'append' })
-    session.append('assistant/message', { message: assistant, stream: [], turn: 1, step: 1 }, { surfaceOp: 'append' })
+    session.append('assistant/message', { message: assistant,  turn: 1, step: 1 }, { surfaceOp: 'append' })
     session.append('step/end', { turn: 1, step: 1 })
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     const messages = session.deriveMessages()

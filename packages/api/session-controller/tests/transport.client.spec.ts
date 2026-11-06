@@ -249,7 +249,7 @@ describe('Session Client stream adapters', () => {
       { ...surfaceEvent('system/message'), surfaceOp: { op: 'replace', startSeq: 2, endSeq: 2 }, sourceEventSeqs: [2], data: { message: { source: { plugin: 'system', extra: true }, content: [] }, extra: { retained: true } } },
       { ...surfaceEvent(), sourceEventSeqs: [0, 2] },
       { ...surfaceEvent(), surfaceOp: { op: 'replace', startSeq: 2, endSeq: 0 }, sourceEventSeqs: [2, 0] },
-      { ...surfaceEvent('assistant/message'), data: { turn: 1, step: 1, message: {}, stream: [] } },
+      { ...surfaceEvent('assistant/message'), data: { turn: 1, step: 1, message: {}, firstTokenTime: 1_000 } },
       { ...surfaceEvent('tool/result'), data: {
         message: { role: 'tool', content: [], isError: true },
         error: { name: 'Error', code: 'FAILURE' }, meta: { extension: ['retained'] },

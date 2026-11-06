@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { createSessionFormatCatalogWithChildren, sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
+import {
+  createV4SessionFormatCatalogWithChildren as createSessionFormatCatalogWithChildren,
+  v4SessionFormatCatalog as sessionFormatCatalog,
+} from './v4-target-catalog.ts'
 import { SessionFormatEventCollector } from '@deepseek-ai/dsh-session-format'
 import type { SessionFormatArtifact, SessionFormatEvent } from '@deepseek-ai/dsh-session-format'
 import { releasedV4SessionFormatCodec, restoreReleasedV4Artifact } from '../src/index.ts'

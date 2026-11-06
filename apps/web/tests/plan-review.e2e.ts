@@ -14,12 +14,12 @@ import { join } from 'node:path'
 import type { Browser, ConsoleMessage, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
-import { deriveReplayScript, parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureExpandedTurnProcessAria, captureStableAria,
   compareOrRefreshGolden, fixtureUserPrompts,
+  deriveFixtureReplayScript,
   launchWebScaffold, recordFixture, seedSession, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
 import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
@@ -402,7 +402,7 @@ describe('web e2e: dismissed plan history', () => {
     // A dismissed review concludes the turn, so only the call presenting the plan replays.
     const replayRoot = await mkdtemp(join(tmpdir(), 'dsh-plan-review-dismiss-replay-'))
     const replayOverride = join(replayRoot, 'replay.override.json')
-    const script = deriveReplayScript(parseSessionLog(await readFile(FIXTURE, 'utf8')))
+    const script = await deriveFixtureReplayScript(FIXTURE)
     await writeFile(replayOverride, JSON.stringify(script.slice(0, 1)))
     const scaffold = await launchWebScaffold({ replayFixture: FIXTURE, replayOverride, compareReplaySession: false, paceMs: 15 })
     let browser: Browser | undefined

@@ -57,7 +57,6 @@ const EVENTS: SessionEvent[] = [
         source: { kind: 'model', provider: 'test', model: 'test' },
         content: [{ type: 'text', text: 'Route answer' }],
       },
-      stream: [],
     },
   },
   { type: 'turn/end', seq: brandNumber<SessionSeq>(5), time: 5, data: { turn: 1, reason: { kind: 'completed' } } },

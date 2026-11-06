@@ -202,7 +202,6 @@ describe('forgeChangeRequests projection', () => {
     session.append('assistant/message', {
       turn: 2,
       step: 1,
-      stream: [],
       message: createAssistantMessage({
         content: [{ type: 'tool-call', id: ToolCallId('orphan'), name: 'bash', arguments: '{"command":"git push"}' }],
         source: { provider: 'fixture', model: 'fixture' },

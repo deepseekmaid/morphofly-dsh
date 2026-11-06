@@ -5,7 +5,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, expandAssistantStream, type TokenUsage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
 /** Result envelope consumed only by snapshot and composition tests. */
@@ -91,10 +91,8 @@ export async function runFixtureTurn(ctx: Context, options: FixtureTurnOptions):
         usageByStep.set(`${event.data.turn}/${event.data.step}`, event.data.usage)
       }
     } else if (event.type === 'assistant/attempt') {
-      const usage = expandAssistantStream(event.data.stream)
-        .findLast(member => member.chunk.type === 'usage')?.chunk
-      if (usage?.type === 'usage') {
-        usageByStep.set(`${event.data.turn}/${event.data.step}`, usage.usage)
+      if (event.data.usage !== undefined) {
+        usageByStep.set(`${event.data.turn}/${event.data.step}`, event.data.usage)
       }
     }
   })

@@ -12,7 +12,7 @@ import {
   type TokenUsage,
 } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
-import type { SessionEventMap, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 
 /** Folds one model attempt into one compact stream plus ordered transient frames. */
 export class AssistantStreamAttempt {
@@ -108,8 +108,8 @@ export class AssistantStreamAttempt {
     })
   }
 
-  /** Exact compact stream for the final durable event. */
-  get stream(): SessionEventMap['assistant/attempt']['stream'] {
+  /** Exact compact stream published beside the final durable settlement. */
+  get stream(): readonly AssistantStreamRecord[] {
     return [...this.accumulator.snapshot()] as AssistantStreamRecord[]
   }
 

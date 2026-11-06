@@ -15,8 +15,8 @@ import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-schedule'
 import type {} from '@deepseek-ai/dsh-subagent'
 import {
-  fixtureUserPrompts, launchWebScaffold, normalizeWebSessionVolatiles, rawSessionLog, readPersistedEvents,
-  recordedSessionFixturePath, selectedSessionFixture, webSnapshotMode,
+  fixtureUserPrompts, harvestSessionStreams, launchWebScaffold, normalizeWebSessionVolatiles, rawSessionLog,
+  readPersistedEvents, recordedSessionFixturePath, selectedSessionFixture, webSnapshotMode, writeSessionStreamFixture,
 } from './scaffold.ts'
 import { REPO_ROOT } from './support.ts'
 
@@ -96,6 +96,28 @@ it.skipIf(MODE === 'record')('replays inherited schedule tools and refusals in a
       await Promise.all(expected.map((log, index) => writeFile(
         recordedSessionFixturePath(paths[index]!, sessions[index]!.header.version), log,
       )))
+      await Promise.all(expected.map(async (_log, index) => {
+        const session = sessions[index]!
+        const streams = new Map(await harvestSessionStreams(scaffold.ctx.sessionPersistence, session))
+        // The fixture carries the source's streams beside the fork so replay can
+        // rebuild the inherited schedule tools; the product fork itself keeps them
+        // only in the source Session.
+        const source = session.header.parentSession === undefined
+          ? undefined : sessions.find(candidate => candidate.id === session.header.parentSession)
+        if (source !== undefined) {
+          for (const [seq, records] of await harvestSessionStreams(scaffold.ctx.sessionPersistence, source)) {
+            if (seq < session.inheritedEventCount) streams.set(seq, records)
+          }
+        }
+        await writeSessionStreamFixture(
+          paths[index]!,
+          index,
+          session,
+          streams,
+          { sessionIds: sessions.map(session => String(session.id)), cwd: scaffold.workspaceCwd },
+          scaffold.harnessHome,
+        )
+      }))
     }
     expect(normalizeSessionSnapshots(raw, context))
       .toEqual(normalizeSessionSnapshots(expected, fixtureContext(expected[0]!)))

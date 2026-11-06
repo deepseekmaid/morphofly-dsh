@@ -3,7 +3,6 @@ import { Context } from '@deepseek-ai/cordis'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { Session, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ProjectionCheckpoint } from '@deepseek-ai/dsh-session-projection'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
@@ -28,7 +27,7 @@ function prefix() {
 
 function answer(session: Session) {
   session.append('assistant/message', {
-    turn: 1, step: 1, stream: [], usage: { inputTokens: 1000, outputTokens: 10 },
+    turn: 1, step: 1, usage: { inputTokens: 1000, outputTokens: 10 },
     message: createAssistantMessage({ content: [{ type: 'text', text: 'answer' }], source: { provider: 'test', model: 'test' } }),
   }, { surfaceOp: 'append' })
   session.append('step/end', { turn: 1, step: 1 })
@@ -67,7 +66,7 @@ describe('measurement recovery facts', () => {
     const changed: string[] = []
     ctx.sessionProjections.onChanged((_session, key) => { changed.push(key) })
     session.append('assistant/message', {
-      turn: 1, step: 1, stream: [], usage: { inputTokens: 1000, outputTokens: 10 },
+      turn: 1, step: 1, usage: { inputTokens: 1000, outputTokens: 10 },
       message: createAssistantMessage({ content: [{ type: 'text', text: 'answer' }], source: { provider: 'test', model: 'test' } }),
     }, { surfaceOp: 'append' })
     expect(changed).toContain('tokenUsage')
@@ -87,7 +86,7 @@ describe('measurement recovery facts', () => {
     const session = prefix()
     const usage = { inputTokens: 1000, outputTokens: -1, providerDetail: { total: 7 } }
     session.append('assistant/message', {
-      turn: 1, step: 1, stream: [], usage,
+      turn: 1, step: 1, usage,
       message: createAssistantMessage({ content: [], source: { provider: 'test', model: 'test' } }),
     }, { surfaceOp: 'append' })
     const state = session.snapshotEvents().reduce(
@@ -98,22 +97,21 @@ describe('measurement recovery facts', () => {
     expect(state.anchor?.usage).toEqual(usage)
   })
 
-  it('keeps stream decode errors local to measurement with their original error type', async () => {
+  it('prices a usage-bearing message from its content without a durable stream', async () => {
     const ctx = await harness()
     const session = ctx.sessions.create()
     session.append('step/start', { turn: 1, step: 1 })
     session.append('request/header', { reason: 'initial', header: { config: { provider: 'test', model: 'test' } } })
-    const data: unknown = {
+    session.append('assistant/message', {
       turn: 1, step: 1, usage: { inputTokens: 1000, outputTokens: 10 },
-      stream: [{ type: 'unsupported' }],
-      message: createAssistantMessage({ content: [], source: { provider: 'test', model: 'test' } }),
-    }
-    // Durable malformed streams were accepted at this existing append boundary.
-    session.append('assistant/message', data as SessionEvent<'assistant/message'>['data'], { surfaceOp: 'append' })
-    expect(() => ctx.sessionProjections.snapshot(session)).not.toThrow()
-    expect(() => ctx.sessionProjections.checkpoint(session)).not.toThrow()
-    expect(() => ctx.tokenMeter.measure(session)).toThrow(Error)
-    expect(() => ctx.tokenMeter.measure(session)).toThrow('unreachable variant in assembleAssistantStream')
+      message: createAssistantMessage({ content: [{ type: 'text', text: 'answer' }], source: { provider: 'test', model: 'test' } }),
+    }, { surfaceOp: 'append' })
+    expect(() => ctx.tokenMeter.measure(session)).not.toThrow()
+    const state = session.snapshotEvents().reduce(
+      (value, event) => measurementProjectionDefinition.apply(value, event),
+      measurementProjectionDefinition.init(),
+    )
+    expect(state.anchor).toEqual({ headerSeq: 1, assistantTokens: 10, usage: { inputTokens: 1000, outputTokens: 10 } })
   })
 
   it('retains only the step coordinates from diagnostic event fields', () => {
@@ -163,7 +161,7 @@ describe('measurement recovery facts', () => {
     expect(JSON.stringify(state).length).toBeLessThan(200)
     expect(state).toEqual({
       headerSeq: 2, stepStart: null, invalidSeq: null,
-      anchor: { headerSeq: 2, assistantTokens: 0, usage: { inputTokens: 1000, outputTokens: 10 } },
+      anchor: { headerSeq: 2, assistantTokens: 10, usage: { inputTokens: 1000, outputTokens: 10 } },
     })
   })
 

@@ -19,12 +19,12 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterEach, describe, expect, it, onTestFailed } from 'vitest'
 import type { RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
-import { deriveReplayScript, parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
 import type { ReplayEntry, ReplayOverrideDoc } from '@deepseek-ai/dsh-llm-replay'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import {
   assertFixtureInventory, captureExpandedTurnProcessAria, captureStableAria,
   compareOrRefreshGolden, fixtureUserPrompts,
+  deriveFixtureReplayScript,
   launchWebScaffold, recordFixture, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
 import { connectFreshWorkspace, newEnglishPage, saveFailureShot, writeComposerDraft } from './support.ts'
@@ -328,7 +328,7 @@ describe('web e2e: live-turn interactions (cancel / error / retry)', () => {
   })
 
   it.skipIf(MODE === 'record')('recovers a transient SERVER failure through llm-retry and completes', async () => {
-    const derived = deriveReplayScript(parseSessionLog(await readFile(FIXTURE, 'utf8')))
+    const derived = await deriveFixtureReplayScript(FIXTURE)
     expect(derived).toHaveLength(1)
     await launch(() => ({
       patches: [
@@ -421,7 +421,7 @@ describe('web e2e: live-turn interactions (cancel / error / retry)', () => {
     // jitter-free instead of walking the shared default's five backed-off
     // attempts.
     const failure: ReplayEntry = { kind: 'throw', chunks: [], message: 'upstream 503', code: 'SERVER' }
-    const derived = deriveReplayScript(parseSessionLog(await readFile(FIXTURE, 'utf8')))
+    const derived = await deriveFixtureReplayScript(FIXTURE)
     await launch(
       () => [failure, failure, failure, ...derived],
       { mode: 'normal', maxRetries: 2, retryableCodes: ['SERVER'], backoff: { initialDelayMs: 25, maxDelayMs: 50, jitterRatio: 0 } },

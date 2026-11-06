@@ -3,7 +3,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime, { createUserMessage, ToolCallId, LlmError, ReasoningEffortId, StreamChunk, expandAssistantStream } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord, GenerateOptions } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId, TurnEndReason } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -56,6 +56,20 @@ function waitForIdle(ctx: Context, agent: Agent): Promise<void> {
   })
 }
 
+/**
+ * Capture the sidecar stream each settlement carries beside its event.
+ * @param ctx - harness context whose sessions publish settlement events.
+ * @returns streams keyed by the committed event sequence.
+ */
+function captureCarriedStreams(ctx: Context): Map<number, readonly AssistantStreamRecord[]> {
+  const streams = new Map<number, readonly AssistantStreamRecord[]>()
+  ctx.on('session/event', (session, event) => {
+    const stream = session.takeAssistantStream(event.seq)
+    if (stream !== undefined) streams.set(event.seq, stream)
+  })
+  return streams
+}
+
 function send(agent: Agent, text: string) {
   agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
 }
@@ -83,6 +97,7 @@ describe('agent loop', () => {
       model: 'mock',
     })
     const frames: AssistantStreamFrame[] = []
+    const carried = captureCarriedStreams(ctx)
     let committedAfterMessage = false
     ctx.on('agent/assistant-stream', ({ agent: subject, frame }) => {
       if (subject !== agent) return
@@ -109,9 +124,11 @@ describe('agent loop', () => {
     expect(chunks.map(frame => frame.index)).toEqual(chunks.map((_frame, index) => index))
     expect(agent.session.snapshotEvents().some(event => (event.type as string) === 'assistant/chunk')).toBe(false)
     const message = agent.session.snapshotEvents().findLast(event => event.type === 'assistant/message')
-    expect(message?.type === 'assistant/message'
-      ? expandAssistantStream(message.data.stream).map(member => member.chunk)
-      : undefined).toStrictEqual(chunks.map(frame => frame.chunk))
+    const carriedStream = message === undefined ? undefined : carried.get(message.seq)
+    expect(carriedStream === undefined
+      ? undefined
+      : expandAssistantStream(carriedStream).map(member => member.chunk),
+    ).toStrictEqual(chunks.map(frame => frame.chunk))
     const end = frames.at(-1)
     expect(end).toMatchObject({
       type: 'end',
@@ -133,12 +150,12 @@ describe('agent loop', () => {
     ctx.on('agent/assistant-stream', ({ agent: subject, frame }) => {
       if (subject === agent) frames.push(frame)
     })
-    const append = agent.session.append.bind(agent.session)
-    Object.defineProperty(agent.session, 'append', {
+    const append = agent.session.appendWithCarry.bind(agent.session)
+    Object.defineProperty(agent.session, 'appendWithCarry', {
       configurable: true,
-      value: (...args: Parameters<typeof agent.session.append>): ReturnType<typeof agent.session.append> => {
+      value: (...args: Parameters<typeof agent.session.appendWithCarry>): ReturnType<typeof agent.session.appendWithCarry> => {
         if (args[0] === 'assistant/message') throw new Error('settlement rejected')
-        return Reflect.apply(append, agent.session, args) as ReturnType<typeof agent.session.append>
+        return Reflect.apply(append, agent.session, args) as ReturnType<typeof agent.session.appendWithCarry>
       },
     })
 
@@ -254,12 +271,12 @@ describe('agent loop', () => {
         if (chunk.type === 'text-delta') throw streamFailure
       }
     })
-    const append = agent.session.append.bind(agent.session)
-    Object.defineProperty(agent.session, 'append', {
+    const append = agent.session.appendWithCarry.bind(agent.session)
+    Object.defineProperty(agent.session, 'appendWithCarry', {
       configurable: true,
-      value: (...args: Parameters<typeof agent.session.append>): ReturnType<typeof agent.session.append> => {
+      value: (...args: Parameters<typeof agent.session.appendWithCarry>): ReturnType<typeof agent.session.appendWithCarry> => {
         if (args[0] === 'assistant/attempt') throw settlementFailure
-        return Reflect.apply(append, agent.session, args) as ReturnType<typeof agent.session.append>
+        return Reflect.apply(append, agent.session, args) as ReturnType<typeof agent.session.appendWithCarry>
       },
     })
     const errors: unknown[] = []
@@ -989,12 +1006,14 @@ describe('agent loop', () => {
     const adapter = new MockAdapter([textResponse('abc')])
     const ctx = await harness(adapter)
     const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+    const carried = captureCarriedStreams(ctx)
 
     send(agent, 'hi')
     await waitForIdle(ctx, agent)
 
     const message = agent.session.snapshotEvents().find(e => e.type === 'assistant/message')
-    const chunks = message?.type === 'assistant/message' ? expandAssistantStream(message.data.stream) : []
+    const carriedStream = message === undefined ? undefined : carried.get(message.seq)
+    const chunks = carriedStream === undefined ? [] : expandAssistantStream(carriedStream)
     // textResponse('abc') = block-start + 3 deltas + block-end + usage + finish = 7
     expect(chunks).toHaveLength(7)
     const deltaText = chunks
@@ -1590,6 +1609,7 @@ describe('agent loop', () => {
     const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
 
     const reasons: TurnEndReason[] = []
+    const carried = captureCarriedStreams(ctx)
     ctx.on('session/event', (_s, event) => { if (event.type === 'turn/end') reasons.push(event.data.reason) })
 
     send(agent, 'go')
@@ -1608,7 +1628,7 @@ describe('agent loop', () => {
       },
     })
     expect(assistant.sourceEventSeqs).toBeUndefined()
-    expect(assistant.type === 'assistant/message' ? assistant.data.stream.length : 0).toBeGreaterThan(0)
+    expect(carried.get(assistant.seq)?.length ?? 0).toBeGreaterThan(0)
     expect(agent.session.deriveMessages().slice(1)).toEqual([{
       id: expect.any(String) as unknown,
       role: 'user',
@@ -1625,6 +1645,7 @@ describe('agent loop', () => {
     const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
 
     const reasons: TurnEndReason[] = []
+    const carried = captureCarriedStreams(ctx)
     ctx.on('session/event', (_s, event) => { if (event.type === 'turn/end') reasons.push(event.data.reason) })
 
     send(agent, 'go')
@@ -1643,7 +1664,7 @@ describe('agent loop', () => {
       },
     })
     expect(assistant.sourceEventSeqs).toBeUndefined()
-    expect(assistant.type === 'assistant/message' ? assistant.data.stream.length : 0).toBe(1)
+    expect(carried.get(assistant.seq)?.length ?? 0).toBe(1)
     expect(agent.session.deriveMessages().slice(1)).toEqual([{
       id: expect.any(String) as unknown,
       role: 'user',

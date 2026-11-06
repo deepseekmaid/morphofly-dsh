@@ -45,7 +45,6 @@ function mentionFixture(): string {
     args: JSON.stringify({ file_path: path, content: `content of ${path}\n` }),
   }))
   session.append('assistant/message', {
-    stream: [],
     turn: 1,
     step: 1,
     message: createAssistantMessage({
@@ -83,7 +82,6 @@ function mentionFixture(): string {
   session.append('step/end', { turn: 1, step: 1 })
   session.append('step/start', { turn: 1, step: 2 })
   session.append('assistant/message', {
-    stream: [],
     turn: 1,
     step: 2,
     message: createAssistantMessage({

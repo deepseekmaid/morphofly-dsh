@@ -4,13 +4,13 @@
  * non-empty assistant message. An empty-content message records usage only
  * when the loop appends it after a max-tokens step with no executable blocks,
  * so it does not replace earlier output. If no non-empty message exists,
- * select the accumulated assistant text. Selection is independent of the
- * run's stop reason.
+ * select the text accumulated outside session events. Selection is independent
+ * of the run's stop reason.
  *
  * @module @deepseek-ai/dsh-subagent/assistant-output
  */
 
-import { joinAssistantStreamText, type ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
 /**
@@ -25,17 +25,13 @@ export class AssistantOutputFold {
 
   /**
    * Fold one session event: a non-empty assistant message becomes the
-   * candidate final answer, while its embedded stream and any log-only attempt
-   * extend the streamed fallback; every other event contributes nothing.
+   * candidate final answer; every other event contributes nothing.
    * @param event - the next observed session event.
    */
   push(event: SessionEvent): void {
     if (event.type === 'assistant/message') {
       const content = event.data.message.content
       if (content.length > 0) this.message = content
-    }
-    if (event.type === 'assistant/message' || event.type === 'assistant/attempt') {
-      this.pushText(joinAssistantStreamText(event.data.stream))
     }
   }
 

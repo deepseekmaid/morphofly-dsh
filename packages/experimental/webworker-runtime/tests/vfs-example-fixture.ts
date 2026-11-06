@@ -133,38 +133,6 @@ function userMessage(id: string, text: string): EventDraft {
   }
 }
 
-function assistantStream(content: readonly unknown[]): unknown[] {
-  const stream: unknown[] = []
-  let toolCalls = false
-  for (const [index, value] of content.entries()) {
-    const block = value as Record<string, unknown>
-    stream.push({ type: 'chunk', time: 0, chunk: { type: 'block-start', index, blockType: block.type } })
-    if (block.type === 'text') {
-      stream.push({ type: 'text-chunks', time0: 0, index, dt: [], texts: [block.text] })
-    } else if (block.type === 'reasoning') {
-      stream.push({ type: 'reasoning-chunks', time0: 0, index, dt: [], texts: [block.text] })
-    } else if (block.type === 'tool-call') {
-      toolCalls = true
-      stream.push({
-        type: 'tool-call-chunks',
-        time0: 0,
-        index,
-        dt: [],
-        id: block.id,
-        name: block.name,
-        args: [block.arguments],
-      })
-    }
-    stream.push({ type: 'chunk', time: 0, chunk: { type: 'block-end', index, block } })
-  }
-  stream.push({
-    type: 'chunk',
-    time: 0,
-    chunk: { type: 'finish', reason: { kind: toolCalls ? 'tool-calls' : 'stop' } },
-  })
-  return stream
-}
-
 function assistantMessage(id: string, turn: number, step: number, content: unknown[]): EventDraft {
   return {
     type: 'assistant/message',
@@ -177,7 +145,7 @@ function assistantMessage(id: string, turn: number, step: number, content: unkno
         content,
         source: { kind: 'model', provider: 'preview-fixture', model: 'deterministic' },
       },
-      stream: assistantStream(content),
+      firstTokenTime: 0,
     },
     surfaceOp: 'append',
   }

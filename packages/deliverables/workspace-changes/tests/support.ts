@@ -37,7 +37,7 @@ export function toolCall(session: Session, turn: number, name: string, args: unk
   const callId = ToolCallId(`call-${++callNumber}`)
   const serialized = JSON.stringify(args)
   session.append('assistant/message', {
-    stream: [], turn, step: 1,
+    turn, step: 1,
     message: createAssistantMessage({
       content: [{ type: 'tool-call', id: callId, name, arguments: serialized }],
       source: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },

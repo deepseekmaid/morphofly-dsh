@@ -152,7 +152,6 @@ function appendTraceEvents(session: Session): void {
   session.append('assistant/attempt', {
     turn: 1,
     step: 1,
-    stream: [{ type: 'text-chunks', time0: 0, index: 0, dt: [], texts: ['draft'] }],
   })
   session.append(
     'user/message',
@@ -420,7 +419,6 @@ describe('session event tracing', () => {
       seq: SessionSeq(1),
       time: 2,
       data: {
-        stream: [],
         turn: 1, step: 1,
         message: createMessage({
           role: 'assistant',
@@ -477,7 +475,6 @@ describe('session event tracing', () => {
         type: 'assistant/attempt', seq: 0, time: 1,
         data: {
           turn: 1, step: 1,
-          stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['draft'] }],
         },
       },
       appendEvent(SessionSeq(1)),

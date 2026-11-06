@@ -7,7 +7,7 @@ import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import { buildForkSeed } from '@deepseek-ai/dsh-session/fork'
 import { createSessionFormatCatalog } from '@deepseek-ai/dsh-session-format'
 import { restoreReleasedV4Artifact } from '@deepseek-ai/dsh-session-format-v3-to-v4'
-import { sessionFormatCatalogOptions } from '../src/generated.ts'
+import { v4SessionFormatCatalog, v4SessionFormatCatalogOptions } from './v4-target-catalog.ts'
 import type { SessionFormatEvent } from '@deepseek-ai/dsh-session-format'
 import { sessionFormatCatalog } from '../src/index.ts'
 
@@ -64,10 +64,10 @@ describe('developer tool history', () => {
     const known = new Set(events.map(event => event.type))
     if (!knowsDeveloper) known.delete('developer/message')
     const catalog = createSessionFormatCatalog({
-      ...sessionFormatCatalogOptions,
+      ...v4SessionFormatCatalogOptions,
       restoreCurrent: candidate => restoreReleasedV4Artifact(candidate, known),
     })
-    const reader = catalog.createRestore(sessionFormatCatalog.encodeCurrentHeader(header, 0), { recovery: 'strict', validation: 'current' })
+    const reader = catalog.createRestore(v4SessionFormatCatalog.encodeCurrentHeader(header, 0), { recovery: 'strict', validation: 'current' })
     for (const event of events) reader.decodeRow(event)
     if (knowsDeveloper) expect(() => reader.finish()).toThrow()
     else expect(reader.finish()).toEqual({ header, events, inheritedEventCount: 0 })

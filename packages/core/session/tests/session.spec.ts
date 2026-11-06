@@ -39,10 +39,8 @@ describe('Session', () => {
     }), { surfaceOp: 'append' })
     session.append('assistant/attempt', {
       turn: 1, step: 1,
-      stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['hi'] }],
     })
     session.append('assistant/message', {
-      stream: [],
       turn: 1, step: 1,
       message: createMessage({
         role: 'assistant',
@@ -136,7 +134,6 @@ describe('Session', () => {
       content: [{ type: 'text', text: 'q' }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })
     original.append('assistant/message', {
-      stream: [],
       turn: 1, step: 1,
       message: createMessage({
         role: 'assistant',
@@ -202,7 +199,7 @@ describe('Session', () => {
       .toEqual([unrelatedPrimitiveData])
   })
 
-  it('validates Assistant settlement fields without replaying embedded streams', () => {
+  it('validates Assistant settlement scalars without replaying the sidecar stream', () => {
     const id = SessionId('invalid-restored-assistant-stream')
     const header = {
       version: SESSION_FORMAT_VERSION,
@@ -213,15 +210,16 @@ describe('Session', () => {
     } as const
     for (const data of [
       null,
-      { turn: '1', step: 1, stream: [] },
-      { turn: -1, step: 1, stream: [] },
-      { turn: -0, step: 1, stream: [] },
-      { turn: 1.5, step: 1, stream: [] },
-      { turn: 1, step: '1', stream: [] },
-      { turn: 1, step: -1, stream: [] },
-      { turn: 1, step: -0, stream: [] },
-      { turn: 1, step: 1.5, stream: [] },
-      { turn: 1, step: 1, stream: null },
+      { turn: '1', step: 1 },
+      { turn: -1, step: 1 },
+      { turn: -0, step: 1 },
+      { turn: 1.5, step: 1 },
+      { turn: 1, step: '1' },
+      { turn: 1, step: -1 },
+      { turn: 1, step: -0 },
+      { turn: 1, step: 1.5 },
+      { turn: 1, step: 1, firstTokenTime: -1 },
+      { turn: 1, step: 1, firstTokenTime: 1.5 },
     ]) {
       const invalidAttempt = {
         type: 'assistant/attempt', seq: 0, time: 1, data,
@@ -236,23 +234,22 @@ describe('Session', () => {
         .toThrow(/invalid settlement fields/)
     }
 
-    const mismatchedMessage = {
+    const mismatchedMessage: SessionEvent<'assistant/message'> = {
       type: 'assistant/message',
-      seq: 0,
+      seq: SessionSeq(0),
       time: 1,
       data: {
         turn: 1,
         step: 1,
         message: {
-          id: 'message',
+          id: MessageId('message'),
           role: 'assistant',
           content: [{ type: 'text', text: 'different' }],
           source: { kind: 'model', provider: 'mock', model: 'mock' },
         },
-        stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['streamed'] }],
       },
       surfaceOp: 'append',
-    } as unknown as SessionEvent
+    }
     const restored = Session.fromRestore(
       id,
       [mismatchedMessage],

@@ -9,7 +9,10 @@ import { join } from 'node:path'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
-import { ToolCallId, expandAssistantStream, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import {
+  ToolCallId, expandAssistantStream,
+  type AssistantStreamRecord, type StreamChunk, type TimedStreamChunk,
+} from '@deepseek-ai/dsh-llm'
 import type { ReplayEntry, ReplayOverrideDoc } from '@deepseek-ai/dsh-llm-replay'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import {
@@ -163,6 +166,25 @@ function toolResultText(event: Extract<SessionEvent, { type: 'tool/result' }>): 
   return text
 }
 
+/** Expand the Assistant streams V5 stores beside the log for one turn's settlements. */
+async function settlementChunks(
+  scaffold: WebScaffold,
+  sessionId: SessionId,
+  settlements: readonly SessionEvent[],
+): Promise<readonly TimedStreamChunk[]> {
+  const handle = await scaffold.ctx.sessionPersistence.open(sessionId, 'read')
+  try {
+    const records: AssistantStreamRecord[] = []
+    for (const event of settlements) {
+      if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') continue
+      records.push(...await handle.readAssistantStream?.(event.seq) ?? [])
+    }
+    return expandAssistantStream(records)
+  } finally {
+    await handle.close()
+  }
+}
+
 function messageKey(event: SessionEvent<'user/message'>): string {
   return conversationContextKey('input-message', String(event.data.id))
 }
@@ -277,11 +299,7 @@ describe('web e2e: continuous conversation grown through the composer', () => {
       const turnEnds = turnEvents.filter((event): event is SessionEvent<'turn/end'> => (
         event.type === 'turn/end'
       ))
-      const chunks = turnEvents.flatMap(event => (
-        event.type === 'assistant/message' || event.type === 'assistant/attempt'
-          ? expandAssistantStream(event.data.stream)
-          : []
-      ))
+      const chunks = await settlementChunks(scaffold, settledSessionId, turnEvents)
 
       expect(turnStarts).toHaveLength(1)
       expect(turnStarts[0]?.data.turn).toBe(spec.index)
@@ -345,11 +363,12 @@ describe('web e2e: continuous conversation grown through the composer', () => {
       '[data-chat-flow-kind="system-prompt"]',
     ).count()).toBe(0)
     expect(specs.at(-1)?.prompt.length).toBeGreaterThan(4_000)
-    expect(sessionEvents.flatMap(event => (
-      (event.type === 'assistant/message' || event.type === 'assistant/attempt')
-        && event.data.turn === TURN_COUNT
-        ? expandAssistantStream(event.data.stream)
-        : []
+    expect((await settlementChunks(
+      scaffold,
+      sessionId,
+      sessionEvents.filter(event =>
+        (event.type === 'assistant/message' || event.type === 'assistant/attempt')
+        && event.data.turn === TURN_COUNT),
     )).length).toBeGreaterThan(30)
     expect(consoleWarnings).toEqual([])
     expect(tripwire.pageErrors).toEqual([])

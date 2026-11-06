@@ -33,10 +33,16 @@ import {
 import { redactSessionSnapshotIds } from './identity.ts'
 import { captureExpectedWorkspaceSnapshot } from './workspace.ts'
 import {
+  assertAssistantStreamFixtureCoverage,
+  renderAssistantStreamFixture,
+  writeAssistantStreamFixture,
+} from './assistant-streams.ts'
+import {
   assertSessionFixtureVersion,
   sessionFixtureName,
   sessionFixtureNames,
   sessionHeaderVersion,
+  sessionStreamFixtureNames,
 } from './session-files.ts'
 import {
   type CwdPathMode,
@@ -1329,12 +1335,18 @@ export function defineAcpSnapshotSuite(options: SnapshotSuiteOptions): void {
         // and refresh never write or compare a current-writer session for it.
         const comparesLog = scenario.comparesLog ?? (scenario.hasModelTurn
           && manifest.sessionFormat === undefined)
+        const committedStreamFiles = RECORDING
+          ? []
+          : sessionStreamFixtureNames(await readdir(dir), fixtureFiles)
         const result = await runScenario(input, {
           agent,
           mode: childMode,
           fixtureFile: join(dir, primaryFixtureFile),
           ...scenario.env !== undefined ? { env: scenario.env } : {},
           ...existsSync(overrideFile) ? { overrideFile } : {},
+          ...committedStreamFiles.some(name => name !== undefined)
+            ? { streamFiles: committedStreamFiles.map(name => name === undefined ? '' : join(dir, name)) }
+            : {},
           // In REPLAY, forward the recorded child fixtures so each subagent session
           // replays from its own script. In RECORD they are harvested, not read.
           ...!RECORDING && childFixtureFiles.length > 0 ? { childFiles: childFixtureFiles.map(file => join(dir, file)) } : {},
@@ -1405,6 +1417,14 @@ export function defineAcpSnapshotSuite(options: SnapshotSuiteOptions): void {
           ))
           await Promise.all(outputFixtures.map((fixture, index) =>
             writeFile(join(dir, outputFixtureFiles[index] as string), fixture)))
+          await Promise.all(result.sessionLogs.map((log, index) => writeAssistantStreamFixture(
+            dir,
+            index,
+            sessionHeaderVersion(log.content, `harvested Session ${index}`),
+            log.streams,
+            ctx,
+            refreshReplacements,
+          )))
           fixtureFiles = outputFixtureFiles
           if (scenario.pinsHeader === true) {
             const primary = result.sessionLogs[0] as HarvestedLog
@@ -1485,6 +1505,17 @@ export function defineAcpSnapshotSuite(options: SnapshotSuiteOptions): void {
           for (const [index, actual] of actualSnapshots.entries()) {
             expect(actual, `${fixtureFiles[index]} mismatch`).toEqual(expectedSnapshots[index])
           }
+          const committedStreamFiles = sessionStreamFixtureNames(await readdir(dir), fixtureFiles)
+          await Promise.all(committedStreamFiles.map(async (streamFile, index) => {
+            if (streamFile === undefined) return
+            const log = result.sessionLogs[index] as HarvestedLog
+            expect(log.streams, `${streamFile}: run produced no Assistant-stream sidecar`).toBeDefined()
+            const expected = await readFile(join(dir, streamFile), 'utf8')
+            expect(
+              renderAssistantStreamFixture(log.streams as NonNullable<HarvestedLog['streams']>, ctx),
+              `${streamFile} mismatch`,
+            ).toBe(expected)
+          }))
         }
 
         // Every live full header must equal its class pin reconstructed from
@@ -1648,7 +1679,8 @@ export function defineAcpSnapshotSuite(options: SnapshotSuiteOptions): void {
           .toBe(promptOwners.has(name))
         expect(existsSync(join(dir, TOOL_SCHEMAS_SNAPSHOT)), `${name}/${TOOL_SCHEMAS_SNAPSHOT} presence must match snapshot-source ownership`)
           .toBe(schemaOwners.has(name))
-        await expect(sessionFixtures(dir), `${name}: session fixture inventory`).resolves.toBeDefined()
+        const selectedFixtureNames = await sessionFixtures(dir)
+        await assertAssistantStreamFixtureCoverage(dir, files, selectedFixtureNames)
       }
     })
 

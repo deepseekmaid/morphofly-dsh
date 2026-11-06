@@ -40,17 +40,13 @@ function startStep(session: Session, turn: number, step: number): void {
   session.append('step/start', { turn, step })
 }
 
-function usageChunk(
+function attemptUsage(
   session: Session,
   usage: TokenUsage,
   turn: number,
   step: number,
 ): SessionSeq {
-  return session.append('assistant/attempt', {
-    turn,
-    step,
-    stream: [{ type: 'chunk', time: 0, chunk: { type: 'usage', usage } }],
-  }).seq
+  return session.append('assistant/attempt', { turn, step, usage }).seq
 }
 
 function finalUsage(
@@ -60,7 +56,6 @@ function finalUsage(
   step: number,
 ): void {
   session.append('assistant/message', {
-    stream: [{ type: 'chunk', time: 0, chunk: { type: 'usage', usage } }],
     turn,
     step,
     message: createMessage({
@@ -127,7 +122,7 @@ describe('tokenUsage session projection', () => {
       reasoningTokens: 3,
     }
     startStep(session, 1, 1)
-    usageChunk(session, usage, 1, 1)
+    attemptUsage(session, usage, 1, 1)
     finalUsage(session, usage, 1, 1)
 
     expect(projected(ctx, session)).toEqual({
@@ -142,7 +137,7 @@ describe('tokenUsage session projection', () => {
   it('replaces an earlier same-step chunk sample with the final usage', async () => {
     const { ctx, session } = await harness()
     startStep(session, 1, 1)
-    usageChunk(session, {
+    attemptUsage(session, {
       inputTokens: 10,
       outputTokens: 2,
       cacheReadTokens: 3,
@@ -167,23 +162,12 @@ describe('tokenUsage session projection', () => {
     const retryId = RetryId('token-meter-retry')
     session.append('turn/start', { turn: 1 })
     startStep(session, 1, 1)
-    usageChunk(session, {
+    attemptUsage(session, {
       inputTokens: 10,
       outputTokens: 2,
       cacheReadTokens: 3,
     }, 1, 1)
-    session.append('assistant/attempt', {
-      turn: 1,
-      step: 1,
-      stream: [{
-        type: 'chunk',
-        time: 1,
-        chunk: {
-          type: 'finish',
-          reason: { kind: 'error', failure: { code: 'RATE_LIMIT', message: 'busy', status: 429 } },
-        },
-      }],
-    })
+    session.append('assistant/attempt', { turn: 1, step: 1 })
     session.append('llm/retry', {
       retryId,
       turn: 1,
@@ -197,7 +181,7 @@ describe('tokenUsage session projection', () => {
       failure: { code: 'RATE_LIMIT', message: 'busy', status: 429 },
     })
     session.append('llm/retry-started', { retryId, turn: 1, step: 1, retry: 1 })
-    usageChunk(session, {
+    attemptUsage(session, {
       inputTokens: 12,
       outputTokens: 4,
       cacheReadTokens: 6,
@@ -221,7 +205,7 @@ describe('tokenUsage session projection', () => {
   it('accumulates disjoint buckets across steps without adding reasoning twice', async () => {
     const { ctx, session } = await harness()
     startStep(session, 1, 1)
-    usageChunk(session, {
+    attemptUsage(session, {
       inputTokens: 10,
       outputTokens: 6,
       reasoningTokens: 5,
@@ -234,7 +218,7 @@ describe('tokenUsage session projection', () => {
       cacheReadTokens: 2,
     }, 1, 1)
     startStep(session, 1, 2)
-    usageChunk(session, {
+    attemptUsage(session, {
       inputTokens: 20,
       outputTokens: 9,
       reasoningTokens: 7,
@@ -258,7 +242,7 @@ describe('tokenUsage session projection', () => {
   it('retains a usage chunk when the request produces no final assistant message', async () => {
     const { ctx, session } = await harness()
     startStep(session, 1, 1)
-    usageChunk(session, { inputTokens: 9, outputTokens: 1 }, 1, 1)
+    attemptUsage(session, { inputTokens: 9, outputTokens: 1 }, 1, 1)
     session.append('step/end', { turn: 1, step: 1 })
     expect(projected(ctx, session)).toEqual({
       uncachedInputTokens: 9,
@@ -271,7 +255,7 @@ describe('tokenUsage session projection', () => {
   it('does not erase historical billing when the visible surface is replaced', async () => {
     const { ctx, session } = await harness()
     startStep(session, 1, 1)
-    usageChunk(session, { inputTokens: 12, outputTokens: 3 }, 1, 1)
+    attemptUsage(session, { inputTokens: 12, outputTokens: 3 }, 1, 1)
     finalUsage(session, { inputTokens: 12, outputTokens: 3 }, 1, 1)
     const before = session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'before compaction' }],
@@ -297,7 +281,7 @@ describe('tokenUsage session projection', () => {
   it('unregisters with the token-meter fiber and restores from a JSON checkpoint', async () => {
     const { ctx, session, meterFiber } = await harness()
     startStep(session, 1, 1)
-    usageChunk(session, { inputTokens: 8, outputTokens: 2, cacheReadTokens: 5 }, 1, 1)
+    attemptUsage(session, { inputTokens: 8, outputTokens: 2, cacheReadTokens: 5 }, 1, 1)
     const checkpoint = JSON.parse(JSON.stringify(
       ctx.sessionProjections.checkpoint(session),
     )) as ReturnType<typeof ctx.sessionProjections.checkpoint>
@@ -346,7 +330,6 @@ function appendAssistant(
   step: number,
 ): SessionSeq {
   return session.append('assistant/message', {
-    stream: [],
     turn,
     step,
     message: createMessage({
@@ -374,7 +357,7 @@ describe('contextPressure session projection', () => {
   it('sums prompt-side buckets and excludes response output', async () => {
     const { ctx, session } = await harness()
     startStep(session, 1, 1)
-    usageChunk(session, {
+    attemptUsage(session, {
       inputTokens: 100,
       outputTokens: 4_000,
       cacheReadTokens: 20,
@@ -389,10 +372,10 @@ describe('contextPressure session projection', () => {
   it('replaces pressure with the newest request rather than accumulating', async () => {
     const { ctx, session } = await harness()
     startStep(session, 1, 1)
-    usageChunk(session, { inputTokens: 100, outputTokens: 10 }, 1, 1)
+    attemptUsage(session, { inputTokens: 100, outputTokens: 10 }, 1, 1)
     finalUsage(session, { inputTokens: 100, outputTokens: 10 }, 1, 1)
     startStep(session, 2, 1)
-    usageChunk(session, { inputTokens: 250, outputTokens: 10 }, 2, 1)
+    attemptUsage(session, { inputTokens: 250, outputTokens: 10 }, 2, 1)
     expect(pressure(ctx, session).pressureTokens).toBe(250)
   })
 
@@ -400,7 +383,7 @@ describe('contextPressure session projection', () => {
     const { ctx, session } = await harness()
     startStep(session, 1, 1)
     recordContext(session, 'small', 64_000)
-    usageChunk(session, { inputTokens: 100, outputTokens: 10 }, 1, 1)
+    attemptUsage(session, { inputTokens: 100, outputTokens: 10 }, 1, 1)
     expect(pressure(ctx, session)).toEqual({
       pressureTokens: 100, projectedTokens: 100, contextWindow: 64_000,
     })
@@ -414,7 +397,7 @@ describe('contextPressure session projection', () => {
     const { ctx, session } = await harness()
     startStep(session, 1, 1)
     recordContext(session, 'small', 64_000)
-    usageChunk(session, { inputTokens: 100, outputTokens: 10 }, 1, 1)
+    attemptUsage(session, { inputTokens: 100, outputTokens: 10 }, 1, 1)
     recordContext(session, 'unknown')
     expect(pressure(ctx, session)).toEqual({ pressureTokens: 100, projectedTokens: 100 })
   })
@@ -425,7 +408,7 @@ describe('contextPressure session projection', () => {
     const { ctx, session } = await harness()
     startStep(session, 1, 1)
     recordContext(session, 'small', 64_000)
-    usageChunk(session, { inputTokens: 100, outputTokens: 10 }, 1, 1)
+    attemptUsage(session, { inputTokens: 100, outputTokens: 10 }, 1, 1)
     const changed: string[] = []
     ctx.sessionProjections.onChanged((_session, key) => { changed.push(key) })
 
@@ -443,7 +426,7 @@ describe('contextPressure session projection', () => {
     const { ctx, session, meterFiber } = await harness()
     startStep(session, 1, 1)
     recordContext(session, 'small', 64_000)
-    usageChunk(session, { inputTokens: 42, outputTokens: 2 }, 1, 1)
+    attemptUsage(session, { inputTokens: 42, outputTokens: 2 }, 1, 1)
     const checkpoint = JSON.parse(JSON.stringify(
       ctx.sessionProjections.checkpoint(session),
     )) as ReturnType<typeof ctx.sessionProjections.checkpoint>
@@ -514,7 +497,7 @@ describe('contextPressure session projection', () => {
     const { ctx, session } = await harness()
     const question = appendUser(session, 'a question from an unmetered log')
     startStep(session, 1, 1)
-    usageChunk(session, { inputTokens: 100, outputTokens: 1 }, 1, 1)
+    attemptUsage(session, { inputTokens: 100, outputTokens: 1 }, 1, 1)
     session.append('step/end', { turn: 1, step: 1 })
     const before = pressure(ctx, session)
 

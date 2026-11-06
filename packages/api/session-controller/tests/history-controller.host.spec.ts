@@ -68,12 +68,10 @@ describe('HistoryController passive reads', () => {
     const first = f.session.append('assistant/message', {
       turn: 1, step: 1,
       message: createMessage({ role: 'assistant', content: [{ type: 'text', text: 'first' }], source: { kind: 'model', provider: 'p', model: 'm' } }),
-      stream: [],
     }, { surfaceOp: 'append' })
     const second = f.session.append('assistant/message', {
       turn: 1, step: 2,
       message: createMessage({ role: 'assistant', content: [{ type: 'text', text: 'second' }], source: { kind: 'model', provider: 'p', model: 'm' } }),
-      stream: [],
     }, { surfaceOp: 'append' })
     f.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     const observe = vi.spyOn(f.ctx.sessionQuery, 'observeSession')
@@ -95,7 +93,6 @@ describe('HistoryController passive reads', () => {
     f.session.append('assistant/message', {
       turn: 1, step: 1,
       message: createMessage({ role: 'assistant', content: [{ type: 'text', text: 'latest' }], source: { kind: 'model', provider: 'p', model: 'm' } }),
-      stream: [],
     }, { surfaceOp: 'append' })
     const page = await f.history.events({ address: f.address }, f.abort.signal)
     expect(page.cursor).toBe(f.session.seq - 1)
@@ -108,7 +105,6 @@ describe('HistoryController passive reads', () => {
     const replaced = f.session.append('assistant/message', {
       turn: 1, step: 1,
       message: createMessage({ role: 'assistant', content: [{ type: 'text', text: 'visible' }], source: { kind: 'model', provider: 'p', model: 'm' } }),
-      stream: [],
     }, { surfaceOp: 'append' })
     // Compaction rewrites the model-facing surface with a replacement that shadows the original;
     // the human-readable transcript keeps the shadowed append copy.

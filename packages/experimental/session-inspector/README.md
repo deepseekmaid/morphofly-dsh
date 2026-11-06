@@ -1,5 +1,5 @@
 ---
-description: "Virtualized raw Session log and Chat group/node tables with streamed delta rows, pagination, and update highlighting."
+description: "Virtualized raw Session log and Chat group/node tables with live streamed delta rows, paged history, and update highlighting."
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Inspect raw Session logs and Chat structures through the optional [Developer tools bundle](../inspector-profile/README.md). Open **Session log** from the Sidebar's new-tab menu or guide, then choose **Raw log** or **Chat group** from its upper-left selector. Follow object references between Nodes, Turns, and Steps, or locate a selected Node in Chat. Stream chunks appear as child rows, and Chat updates briefly highlight their rows. Both presentations support older history and resizable details without a composer.
+Inspect raw Session logs and Chat structures through the optional [Developer tools bundle](../inspector-profile/README.md). Open **Session log** from the Sidebar's new-tab menu or guide, then choose **Raw log** or **Chat group** from its upper-left selector. Follow object references between Nodes, Turns, and Steps, or locate a selected Node in Chat. Live stream chunks appear as child rows, and Chat updates briefly highlight their rows. Both presentations support older history and resizable details without a composer.
 
 ## Table of Contents
 
@@ -30,7 +30,7 @@ Click the filter icon in the Type header to enter a type fragment. CSS anchors k
 
 Filtered tables retain matching rows and their ancestor context, initially expanding folded ancestors. Context-only types appear muted and do not count toward the matching-row total. New and paginated rows use the confirmed filter. Confirming resets selection, disclosure choices, and reserved trailing space, and returns to the top. Following an object reference or picking a Chat element clears the filter if its target row is excluded, then reveals that row.
 
-Raw log groups records between `turn/start` and `turn/end`, with nested `step/start`–`step/end` ranges. The start record is the sticky group header; the end remains a raw child at the group's tail. Turn and Step groups stay expanded after completion and can be folded manually. Records between Steps belong to the Turn; records outside a loaded range remain ungrouped. Missing starts are not synthesized: loading an earlier start adds ancestry to the existing rows. Assistant streams retain their own nesting inside the Step.
+Raw log groups records between `turn/start` and `turn/end`, with nested `step/start`–`step/end` ranges. The start record is the sticky group header; the end remains a raw child at the group's tail. Turn and Step groups stay expanded after completion and can be folded manually. Records between Steps belong to the Turn; records outside a loaded range remain ungrouped. Missing starts are not synthesized: loading an earlier start adds ancestry to the existing rows. Live Assistant chunks retain their own nesting inside the Step; a stored V5 settlement shows as one row because its timed stream lives in the Session's `streams.v1` sidecar.
 
 Assistant logs group original timed chunks beneath their matching `block-start`, including text, reasoning, and tool-call argument deltas. Unfinished blocks expand by default; `block-end` automatically collapses its block, which can then be reopened manually. Historical closed blocks start collapsed. Live chunks share an attempt row until settlement replaces them with the durable event. Chat group nests actual group members below their group. Hidden or unlisted materialized Nodes remain root rows, inserted by event anchor between the existing roots instead of appended after the last Turn; the Inspector does not invent group membership. Inserts and updates briefly highlight unless the system requests reduced motion.
 
@@ -48,7 +48,7 @@ Selecting a Chat row or following a reference uses the Inspector's [DOM matcher]
 
 Missing, empty, or still-hidden occurrences do not stop navigation. When event coordinates are available, Inspector tries nearby loaded content in the same Step, then the same Turn, then other loaded Turns, ordered by event distance. Existing Group and Turn occurrences also provide fallback positions. If no candidate can render, Inspector highlights the visible Chat column without moving it.
 
-Selecting a Raw log row passes the [original log coordinates](src/client/views/session-log/chat-target.ts) through the same DOM lookup while retaining the log presentation and JSON details. Inspector reads the existing Chat snapshot and prefers tool call identity, exact event anchors, and the owning Assistant step before applying the same fallback selection. Stream children inherit their owning event and prefer reasoning or response parts when available. Missing targets do not load history or switch the active View; an empty Chat has nothing to highlight.
+Selecting a Raw log row passes the [original log coordinates](src/client/views/session-log/chat-target.ts) through the same DOM lookup while retaining the log presentation and JSON details. Inspector reads the existing Chat snapshot and prefers tool call identity, exact event anchors, and the owning Assistant step before applying the same fallback selection. Live stream children inherit their owning event and prefer reasoning or response parts when available. Missing targets do not load history or switch the active View; an empty Chat has nothing to highlight.
 
 The crosshair beside the presentation selector installs a transparent click-catching mask over the displayed main Chat. Inspector uses `elementsFromPoint()` to look below its mask and preview, then matches existing data attributes. A click selects that record in the current Inspector presentation, reveals its table ancestors, and opens its details without activating the underlying Chat control. Wheel movement is forwarded to the underlying Chat scrollport. Escape, the crosshair button, changing presentation or Session, hiding or closing the Inspector, or leaving the window cancels picking. Each plugin instance permits one active picker; separate instances do not cancel one another. Plugin unload releases its picker without calling panel callbacks and prevents old panels from restarting it.
 

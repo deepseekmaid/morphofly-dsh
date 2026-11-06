@@ -4,7 +4,22 @@
  * @module @deepseek-ai/dsh-session-persistence/handle
  */
 
-import type { SessionEvent, SessionHeader, SessionId, SessionLogOffset, SessionSeedEventState } from '@deepseek-ai/dsh-session'
+import type {
+  SessionAppendCarry,
+  SessionEvent,
+  SessionHeader,
+  SessionId,
+  SessionLogOffset,
+  SessionSeedEventState,
+  SessionSeq,
+} from '@deepseek-ai/dsh-session'
+
+/**
+ * Compact Assistant stream records stored beside the event log. A settlement
+ * event keeps only scalar summaries in the log; this payload stays in the
+ * backend's per-event sidecar.
+ */
+export type AssistantStreamRecords = NonNullable<SessionAppendCarry['assistantStream']>
 
 /**
  * Log access granted by an open. `write` is read-write: the session's single
@@ -107,6 +122,24 @@ export interface SessionHandle extends AsyncDisposable {
    * @param options - optional cancellation observed before the barrier starts.
    */
   flush(options?: SessionHandleFlushOptions): Promise<void>
+
+  /**
+   * Read the lossless Assistant stream settled by one event.
+   *
+   * Optional capability: present when the backend stores streams beside the
+   * event log (for example the JSONL backend's `streams.v1` sidecars), absent
+   * on backends that keep no per-event stream payload.
+   * @param seq - sequence of the settlement event.
+   * @param options - optional cancellation.
+   * @returns the compact records, or `undefined` when the sequence is not an
+   *   Assistant settlement or does not exist.
+   * @throws {SessionAssistantStreamUnavailableError} when the sequence is an
+   *   Assistant settlement whose stored stream is missing or unreadable.
+   */
+  readAssistantStream?(
+    seq: SessionSeq | number,
+    options?: SessionHandleReadOptions,
+  ): Promise<AssistantStreamRecords | undefined>
 
   /**
    * Release the handle: a read handle frees local resources; a write handle

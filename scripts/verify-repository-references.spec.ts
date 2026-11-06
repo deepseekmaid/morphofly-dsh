@@ -108,6 +108,14 @@ describe('maintained repository reference policy', () => {
     ])
   })
 
+  it('accepts a fork release tag as a release name while still citing bare commits', () => {
+    const hash = `${numericCommit}a`
+    expect(findRepositoryReferences('doc.md', `tag: fork-v0.2.2-rc.1-${hash}`, new Set([hash]))).toEqual([])
+    expect(findRepositoryReferences('doc.md', `tag: fork-v0.2.2-rc.1-${hash} commit ${hash}`, new Set([hash]))).toEqual([
+      { file: 'doc.md', line: 1, kind: 'commit-hash' },
+    ])
+  })
+
   it('accepts byte counts in the real lockfile and still rejects references on added lines', () => {
     const file = 'python/sdk/uv.lock'
     const source = readFileSync(join(import.meta.dirname, '..', file), 'utf8').trimEnd()

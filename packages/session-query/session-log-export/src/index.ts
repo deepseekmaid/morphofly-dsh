@@ -10,7 +10,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
   DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
   flushLiveSessionLog,
-  readSessionLogText,
+  readSessionLogData,
   sessionLogExportDeps,
   sessionLogZipFilename,
   streamSessionLogZip,
@@ -23,6 +23,7 @@ import { SESSION_LOG_EXPORT_PATH, SESSION_MARKDOWN_EXPORT_PATH } from './routes.
 export {
   DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
   flushLiveSessionLog,
+  readSessionLogData,
   readSessionLogText,
   serializeSessionLog,
   SESSION_LOG_FILENAME,
@@ -199,10 +200,10 @@ async function sessionLogExportResponse(
     attachments: deps.attachments,
     sessions: deps.sessions,
   }
-  let rootContent: string | undefined
+  let rootData: Awaited<ReturnType<typeof readSessionLogData>>
   try {
     await flushLiveSessionLog(deps, sessionId, request.signal)
-    rootContent = await readSessionLogText(deps.sessionPersistence, sessionId, request.signal)
+    rootData = await readSessionLogData(deps.sessionPersistence, sessionId, request.signal)
     request.signal.throwIfAborted()
   } catch {
     request.signal.throwIfAborted()
@@ -211,17 +212,18 @@ async function sessionLogExportResponse(
     // browser error bar.
     return new Response('session log export failed to read the stored log', { status: 500 })
   }
-  if (rootContent === undefined) {
+  if (rootData === undefined) {
     return new Response('session not found', { status: 404 })
   }
   const response = new Response(
     streamSessionLogZip(
       ready,
-      rootContent,
+      rootData.text,
       sessionId,
       descendantsValue === 'true',
       compressionLevel,
       request.signal,
+      rootData.entries,
     ),
     {
       headers: {

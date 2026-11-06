@@ -1,4 +1,5 @@
 import { MessageId, createMessage } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord } from '@deepseek-ai/dsh-llm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { appendFile, mkdtemp, mkdir, rm, readFile, writeFile, readdir, stat, symlink } from 'node:fs/promises'
@@ -20,6 +21,7 @@ import {
 import { runLiveWritePathContract } from '../../session-persistence/tests/live-write-contract.ts'
 import { LIVE_WRITE_BATCH_MAX_DELAY_MS, type JsonlSessionHandle, type JsonlHandleStorage } from '../src/storage.ts'
 import { JsonlGenerationSourceChangedError } from '../src/generation.ts'
+import { readAssistantStream } from '../src/streams.ts'
 import SessionStore from '@deepseek-ai/dsh-session'
 
 const statRace = vi.hoisted(() => ({
@@ -1716,7 +1718,7 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     expect((await stat(childPath)).isFile()).toBe(true)
   })
 
-  it('round-trip is byte-identical including nested Assistant stream records', async () => {
+  it('round-trips a V5 settlement whose stream lives in a sidecar', async () => {
     const m = meta('chunks')
     const log: SessionEvent[] = [
       { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } },
@@ -1731,10 +1733,7 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
             ...{ provider: 'mock', model: 'mock' },
           },
         }),
-        stream: [
-          { type: 'text-chunks', time0: 3, index: 0, dt: [1], texts: ['he', 'llo'] },
-          { type: 'chunk', time: 5, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-        ],
+        firstTokenTime: 3,
       }, surfaceOp: 'append' },
       { type: 'step/end', seq: SessionSeq(3), time: 6, data: { turn: 1, step: 1 } },
       { type: 'turn/end', seq: SessionSeq(4), time: 7, data: { turn: 1, reason: { kind: 'completed' } } },
@@ -1742,6 +1741,10 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     await writeLog(ctx.sessionPersistence, m, log)
     const loaded = await readAll(ctx.sessionPersistence, m.id)
     expect(loaded.events).toEqual(log)
+    // The current settlement row keeps scalar timing only.
+    const rows = (await readFile(rawLogPath(root, undefined, m.id), 'utf8')).trimEnd().split('\n')
+      .map(line => JSON.parse(line) as { type: string; data?: Record<string, unknown> })
+    expect(Object.hasOwn(rows.find(row => row.type === 'assistant/message')?.data ?? {}, 'stream')).toBe(false)
   })
 
   it('a torn crash tail is served as the committed prefix and repaired only by the write path', async () => {
@@ -2418,17 +2421,55 @@ describe('JsonlSessionPersistence: scanLog unit', () => {
   })
 })
 
-describe('JsonlSessionPersistence: nested Assistant streams', () => {
+describe('JsonlSessionPersistence: Assistant stream sidecars', () => {
   let ctx: Context
   beforeEach(async () => {
     root = await freshRoot()
     ctx = new Context()
     // compression: 'none' — these tests assert the textual current row layout.
+    await ctx.plugin(SessionStore)
     await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
   })
   afterEach(async () => { await ctx.fiber.dispose() })
 
-  /** A one-turn log whose message embeds a five-member text-delta run. */
+  /** The compact records a settlement carries out of the log. */
+  const streamRecords: readonly AssistantStreamRecord[] = [
+    { type: 'text-chunks', time0: 3, index: 0, dt: [1, 1, 1, 1], texts: ['t0', 't1', 't2', 't3', 't4'] },
+    { type: 'chunk', time: 8, chunk: { type: 'finish', reason: { kind: 'stop' } } },
+  ]
+
+  /** A current V5 one-turn log: the settlement keeps scalars, not the stream. */
+  function currentTurn(turn: number): SessionEvent[] {
+    return [
+      { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn } },
+      { type: 'step/start', seq: SessionSeq(1), time: 2, data: { turn, step: 1 } },
+      { type: 'assistant/message', seq: SessionSeq(2), time: 8, data: {
+        turn, step: 1,
+        message: createMessage({
+          role: 'assistant',
+          content: [{ type: 'text', text: 't0t1t2t3t4' }],
+          source: {
+            kind: 'model',
+            ...{ provider: 'mock', model: 'mock' },
+          },
+        }),
+        firstTokenTime: 3,
+      }, surfaceOp: 'append' },
+      { type: 'step/end', seq: SessionSeq(3), time: 9, data: { turn, step: 1 } },
+      { type: 'turn/end', seq: SessionSeq(4), time: 10, data: { turn, reason: { kind: 'completed' } } },
+    ]
+  }
+
+  /** The stream a released historical settlement embeds in its row. */
+  const historicalStream = [
+    {
+      type: 'text-chunks', time0: 3, index: 0,
+      dt: [1, 1, 1, 1], texts: ['t0', 't1', 't2', 't3', 't4'],
+    },
+    { type: 'chunk', time: 8, chunk: { type: 'finish', reason: { kind: 'stop' } } },
+  ]
+
+  /** A current-shaped one-turn log; the historical source row re-adds its embedded stream. */
   function chunkRunLog(): SessionEvent[] {
     return [
       { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } },
@@ -2443,32 +2484,46 @@ describe('JsonlSessionPersistence: nested Assistant streams', () => {
             ...{ provider: 'mock', model: 'mock' },
           },
         }),
-        stream: [
-          {
-            type: 'text-chunks', time0: 3, index: 0,
-            dt: [1, 1, 1, 1], texts: ['t0', 't1', 't2', 't3', 't4'],
-          },
-          { type: 'chunk', time: 8, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-        ],
+        firstTokenTime: 3,
       }, surfaceOp: 'append' },
       { type: 'step/end', seq: SessionSeq(3), time: 9, data: { turn: 1, step: 1 } },
       { type: 'turn/end', seq: SessionSeq(4), time: 10, data: { turn: 1, reason: { kind: 'completed' } } },
     ]
   }
 
-  it('writes one row per event with compact stream records nested in the message', async () => {
-    const m = meta('packed', '/work')
-    const log = chunkRunLog()
-    await writeLog(ctx.sessionPersistence, m, log)
+  it('writes one row per settlement and keeps its compact stream in the sidecar', async () => {
+    const session = ctx.sessions.create(SessionId('packed'))
+    const handle = await ctx.sessionPersistence.create(session.header)
+    try {
+      session.append('turn/start', { turn: 1 })
+      session.append('step/start', { turn: 1, step: 1 })
+      const settlement = session.appendWithCarry('assistant/message', {
+        turn: 1, step: 1,
+        message: createMessage({
+          role: 'assistant',
+          content: [{ type: 'text', text: 't0t1t2t3t4' }],
+          source: {
+            kind: 'model',
+            ...{ provider: 'mock', model: 'mock' },
+          },
+        }),
+        firstTokenTime: 3,
+      }, { assistantStream: streamRecords }, { surfaceOp: 'append' })
+      session.append('step/end', { turn: 1, step: 1 })
+      session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      await expect(ctx.sessions.flush(session)).resolves.toBe(true)
 
-    const raw = (await readFile(rawLogPath(root, '/work', m.id), 'utf8')).split('\n').filter(Boolean)
-    const tags = raw.slice(1).map(line => (JSON.parse(line) as { type: string }).type)
-    expect(tags).toEqual(['turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end'])
-    const message = JSON.parse(raw[3] as string) as { data: { stream: Array<{ type: string }> } }
-    expect(message.data.stream.map(record => record.type)).toEqual(['text-chunks', 'chunk'])
-
-    const loaded = await readAll(ctx.sessionPersistence, m.id)
-    expect(loaded.events).toEqual(log)
+      const raw = (await readFile(rawLogPath(root, undefined, session.id), 'utf8')).trimEnd().split('\n')
+      expect(raw.slice(1).map(line => (JSON.parse(line) as { type: string }).type))
+        .toEqual(['turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end'])
+      const settlementRow = JSON.parse(raw[3] as string) as { data: Record<string, unknown> }
+      expect(settlementRow.data['firstTokenTime']).toBe(3)
+      expect(Object.hasOwn(settlementRow.data, 'stream')).toBe(false)
+      await expect(readAssistantStream(sessionDir(root, session.header.cwd, session.id), settlement.seq, 'none'))
+        .resolves.toEqual(streamRecords)
+    } finally {
+      await handle.close()
+    }
   })
 
   it.each([2, 3])('reads v%s rows and appends a current turn without changing predecessor bytes', async (version) => {
@@ -2476,27 +2531,44 @@ describe('JsonlSessionPersistence: nested Assistant streams', () => {
     const log = chunkRunLog()
     const sourcePath = generationLogPath(root, '/work', m.id, version, 'none')
     const currentPath = rawLogPath(root, '/work', m.id)
+    // The released generation embeds the settlement stream in its row and has no scalar.
+    const historicalRows = log.map((event, index) => {
+      if (index !== 2 || event.type !== 'assistant/message') return event
+      const { firstTokenTime: _firstTokenTime, ...data } = event.data
+      return { ...event, data: { ...data, stream: historicalStream } }
+    })
     const source = Buffer.from([
       JSON.stringify({
         type: 'session', version, id: 'mixed', createdAt: 1000,
         cwd: '/work', isSeeded: false, delegationDepth: 0,
       }),
-      ...log.map(e => JSON.stringify(e)),
+      ...historicalRows.map(e => JSON.stringify(e)),
     ].join('\n') + '\n')
     await mkdir(dirname(sourcePath), { recursive: true })
     await writeFile(sourcePath, source)
 
-    const expected = version === 2 ? withMigratedEmptyHead(log) : log
+    const migrationSettlement = log[2] as SessionEvent<'assistant/message'>
+    const migrated: SessionEvent[] = [
+      log[0]!, log[1]!,
+      { ...migrationSettlement, data: {
+        turn: migrationSettlement.data.turn,
+        step: migrationSettlement.data.step,
+        message: migrationSettlement.data.message,
+        firstTokenTime: 3,
+      } },
+      log[3]!, log[4]!,
+    ]
+    const expected: readonly SessionEvent[] = version === 2
+      ? withMigratedEmptyHead(migrated) as readonly SessionEvent[]
+      : migrated
     const restored = await readAll(ctx.sessionPersistence, m.id)
     expect(restored.meta.version).toBe(SESSION_FORMAT_VERSION)
     expect(restored.events).toEqual(expected)
     expect(await readFile(sourcePath)).toEqual(source)
     await expect(readFile(currentPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    const secondTurn: SessionEvent[] = JSON.parse(JSON.stringify(log)) as SessionEvent[]
-    for (const [k, e] of secondTurn.entries()) {
-      ;(e as { seq: number }).seq = expected.length + k
-      ;(e.data as { turn: number }).turn = 2
-    }
+    const secondTurn: SessionEvent[] = currentTurn(2).map(event => ({
+      ...event, seq: SessionSeq(expected.length + event.seq),
+    }))
     await appendBatch(ctx.sessionPersistence, m.id, secondTurn)
 
     const loaded = await readAll(ctx.sessionPersistence, m.id)
@@ -2557,14 +2629,15 @@ describe('JsonlSessionPersistence: nested Assistant streams', () => {
     expect(scanned.committedBytes).toBe(Buffer.byteLength(headerAndTurn, 'utf8'))
   })
 
-  it('eventLines keeps one event per line with nested compact stream records', () => {
-    const log = chunkRunLog()
+  it('eventLines keeps one V5 event per line without an embedded stream', () => {
+    const log = currentTurn(1)
     const text = eventLines(log)
     const lines = text.split('\n')
     expect(lines).toHaveLength(log.length)
     for (const line of lines) {
       expect((JSON.parse(line) as { type: string }).type).not.toMatch(/-chunks$/)
     }
+    expect(text).not.toContain('"stream"')
     const header = JSON.stringify(toHeaderLine(meta('packed', '/work'))) + '\n'
     expect(scanLog(Buffer.from(header + text + '\n')).events).toEqual(log)
   })

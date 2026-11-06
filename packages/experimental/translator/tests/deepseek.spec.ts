@@ -66,7 +66,7 @@ describe('native Flash translation', () => {
     session.append('user/message', createUserMessage({ content: [{ type: 'text', text: 'Private main conversation input' }],
       source: { kind: 'user' } }), { surfaceOp: 'append' })
     session.append('step/start', { turn: 1, step: 1 })
-    session.append('assistant/message', { turn: 1, step: 1, stream: [], message: createAssistantMessage({
+    session.append('assistant/message', { turn: 1, step: 1,  message: createAssistantMessage({
       content: [{ type: 'text', text: 'Existing main conversation answer' }], source: { provider: 'main-route', model: 'main-model' },
     }) }, { surfaceOp: 'append' })
     session.append('step/end', { turn: 1, step: 1 })

@@ -10,8 +10,8 @@ import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, onTestFinished, type MockInstance } from 'vitest'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { expandAssistantStream, type UserMessage } from '@deepseek-ai/dsh-llm'
+import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import { expandAssistantStream, type AssistantStreamRecord, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { parseRemoteStreamServerMessage } from '@deepseek-ai/dsh-api-gateway/stream-protocol'
 import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureExpandedTurnProcessAria, captureStableAria,
@@ -54,14 +54,25 @@ const STEER_ALL_SETTLED_EXPANDED = join(STEER_ALL_DIR, 'settled-expanded.expecte
 const STEER_ONE = 'Interjection: include the word BANANA in your final reply.'
 const STEER_TWO = 'Interjection: include the word ORANGE in your final reply.'
 
-/** Concatenated assistant text deltas — the model-visible reply body. */
-function assistantText(events: SessionEvent[]): string {
-  return events
-    .flatMap(e => e.type === 'assistant/message' || e.type === 'assistant/attempt'
-      ? expandAssistantStream(e.data.stream)
-      : [])
-    .map(({ chunk }) => chunk.type === 'text-delta' ? chunk.text : '')
-    .join('')
+/** Concatenated assistant text deltas from the V5 sidecar streams — the model-visible reply body. */
+async function assistantText(
+  scaffold: WebScaffold,
+  sessionId: SessionId,
+  events: readonly SessionEvent[],
+): Promise<string> {
+  const handle = await scaffold.ctx.sessionPersistence.open(sessionId, 'read')
+  try {
+    const records: AssistantStreamRecord[] = []
+    for (const event of events) {
+      if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') continue
+      records.push(...await handle.readAssistantStream?.(event.seq) ?? [])
+    }
+    return expandAssistantStream(records)
+      .map(({ chunk }) => chunk.type === 'text-delta' ? chunk.text : '')
+      .join('')
+  } finally {
+    await handle.close()
+  }
 }
 
 /** Claimed user messages whose payload contains the exact scenario text. */
@@ -192,7 +203,7 @@ describe('web e2e: mid-turn steering lands durably and visibly', () => {
       // would replay as a vacuous scenario — reject it and re-record instead.
       const recorded = parseSessionLog(await readFile(FIXTURE, 'utf8'))
       expect(claimedMessages(recorded, STEER)).toHaveLength(1)
-      expect(assistantText(recorded)).toContain('BANANA')
+      expect(await assistantText(scaffold, sessionId, sessionEvents)).toContain('BANANA')
       return
     }
 
@@ -666,14 +677,14 @@ describe('web e2e: empty-draft Cmd+Enter steers the whole queue', () => {
     await composer.waitFor({ timeout: 30_000 })
     await composer.getByRole('radio', { name: 'Yes' }).click()
     await composer.getByRole('radio', { name: 'Yes' }).press('Enter')
-    await settled
+    const settledSessionId = await settled
 
     const first = claimedMessages(sessionEvents, STEER_ONE)
     const second = claimedMessages(sessionEvents, STEER_TWO)
     expect(first).toHaveLength(1)
     expect(second).toHaveLength(1)
-    expect(assistantText(sessionEvents)).toContain('BANANA')
-    expect(assistantText(sessionEvents)).toContain('ORANGE')
+    expect(await assistantText(scaffold, settledSessionId, sessionEvents)).toContain('BANANA')
+    expect(await assistantText(scaffold, settledSessionId, sessionEvents)).toContain('ORANGE')
     await expect.poll(() => page.getByText(STEER_ONE, { exact: true }).count(), { timeout: 15_000 }).toBe(1)
     await expect.poll(() => page.getByText(STEER_TWO, { exact: true }).count(), { timeout: 15_000 }).toBe(1)
     expect(await page.locator('[data-pending-steering]').count()).toBe(0)

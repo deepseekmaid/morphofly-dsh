@@ -41,7 +41,13 @@ describe.each(modes)('retired content in JSONL ($compression, $access)', ({ comp
   ('refuses V$version content with corruptPrefix=$corruptPrefix and preserves the only generation', async ({ version, corruptPrefix }) => {
     const { ctx, path, bytes } = await stored(version, false, corruptPrefix)
     const opened = ctx.sessionPersistence.open(id, access).then(async (handle) => { await handle.close() })
-    await expect(opened).rejects.toBeInstanceOf(version === 3 ? SessionFormatUnsupportedError : SessionPersistenceCorruptionError)
+    // V4 rows are admitted by the released V4 codec, so their content refusal is
+    // corruption; a V3 source refusal happens while transforming, which surfaces
+    // as an unsupported migration. An unparsable committed line is corruption.
+    await expect(opened).rejects.toBeInstanceOf(
+      !corruptPrefix && version === 3 ? SessionFormatUnsupportedError : SessionPersistenceCorruptionError,
+    )
+    // The unparsable record must not suppress the retired content behind it.
     await expect(opened).rejects.toThrow(/released tool-result wrapper/)
     expect(await readFile(path)).toEqual(bytes)
     expect((await readdir(dirname(path))).filter(name => name !== 'session.lock')).toEqual([basename(path)])

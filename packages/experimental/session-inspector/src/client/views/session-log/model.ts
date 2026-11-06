@@ -1,8 +1,14 @@
-/** Incremental raw Session rows with lossless Assistant stream children. */
+/**
+ * Incremental raw Session rows with lossless live Assistant chunk children.
+ *
+ * Durable Assistant settlements in Session format V5 keep their exact timed stream
+ * in the Session-local `streams.v1` sidecar, not inside the event. This table
+ * therefore shows settlement rows without chunk children; loading a settled
+ * stream on demand from the sidecar is deferred follow-up work for the inspector.
+ */
 
 import type { SessionEventSource, SessionEventWindow, SessionEventLikeEntry } from '@deepseek-ai/dsh-api-session-controller/client'
 import { createSnapshotStore, type ObservableSnapshot, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { expandAssistantStream, type AssistantStreamRecord, type TimedStreamChunk } from '@deepseek-ai/dsh-llm/assistant-stream'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { InspectorRecord, InspectorRow } from '../table-model.ts'
@@ -28,7 +34,6 @@ export class SessionLogModel implements ObservableSnapshot<readonly InspectorRow
   private groups = new SessionLogGroups()
   /** Preserve live-to-durable row identities only while their rows remain in the loaded window. */
   private readonly settledRoots = new Map<SessionSeq, string>()
-  private readonly streams = new WeakMap<readonly AssistantStreamRecord[], readonly TimedStreamChunk[]>()
   private revision = -1
   private subscribers = 0
   private disconnect: (() => void) | undefined
@@ -183,16 +188,10 @@ export class SessionLogModel implements ObservableSnapshot<readonly InspectorRow
     const data = event.data
     const location = 'turn' in data ? `${data.turn}${'step' in data ? `/${data.step}` : ''}` : ''
     this.put(key, { type: event.type, identity: String(event.seq), time: event.time, location, value: event })
-    if (entry.event.type === 'assistant/message' || entry.event.type === 'assistant/attempt') {
-      const hierarchy = new AssistantLogStream(key)
-      const root = this.root(key, entry, rows, hierarchy)
-      const stream = entry.event.data.stream
-      let chunks = this.streams.get(stream)
-      if (chunks === undefined) { chunks = expandAssistantStream(stream); this.streams.set(stream, chunks) }
-      for (const item of chunks) {
-        this.addChunk(root, rows, item.time, item.chunk, location)
-      }
-    } else this.root(key, entry, rows)
+    // A durable V5 settlement has no embedded stream; its chunks live in the Session sidecar
+    // and this table omits them until an on-demand inspector read exists. Client-only live
+    // attempts above still show their chunk rows.
+    this.root(key, entry, rows)
   }
 
   private addChunk(root: LogRoot, rows: InspectorRow[], time: number, chunk: StreamChunk, location: string): number {

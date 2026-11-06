@@ -22,7 +22,7 @@ describe('web e2e: delivery after the closing reply', () => {
   beforeAll(async () => {
     scaffold = await launchWebScaffold({})
     await writeFile(join(scaffold.workspaceCwd, 'report.txt'), 'DRAFT_REPORT\n')
-    await seedSession(scaffold, await readFile(join(SNAPSHOT_DIR, 'session.v4.jsonl'), 'utf8'), 'present-after-closing-reply')
+    await seedSession(scaffold, await readFile(join(SNAPSHOT_DIR, 'session.v5.jsonl'), 'utf8'), 'present-after-closing-reply')
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
     tripwire = watchConsole(page)
@@ -52,6 +52,6 @@ describe('web e2e: delivery after the closing reply', () => {
     await page.locator('[data-rightbar-col] [data-document-preview]').getByText('DRAFT_REPORT', { exact: true }).waitFor()
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
-    await assertFixtureInventory(SNAPSHOT_DIR, ['session.v4.jsonl', 'ui.expected.md'])
+    await assertFixtureInventory(SNAPSHOT_DIR, ['session.v5.jsonl', 'ui.expected.md'])
   })
 })

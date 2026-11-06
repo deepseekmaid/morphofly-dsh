@@ -1,4 +1,4 @@
-/** Opt-in synthetic benchmark for v2 embedded Assistant stream history. */
+/** Opt-in synthetic benchmark for V5 sidecar Assistant stream transport. */
 
 import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
@@ -75,11 +75,15 @@ interface FoldSnapshots {
 interface HistoryValue {
   readonly records: SessionHistoryRecord[]
   readonly hasMore: boolean
+  /** Sidecar streams a history reader fetches by settlement sequence, one per settlement. */
+  readonly streams: readonly (readonly AssistantStreamRecord[])[]
 }
 
 interface HistoryFixture {
   readonly rawEvents: readonly SessionEvent[]
   readonly compactEvents: readonly SessionEvent[]
+  readonly rawStream: readonly AssistantStreamRecord[]
+  readonly compactStream: readonly AssistantStreamRecord[]
   readonly rawRecordCount: number
   readonly compactRecordCount: number
 }
@@ -98,9 +102,15 @@ const historyEntrySchema = z.object({
   type: z.literal('event'),
   event: sessionWireEventSchema,
 }).strict()
+/** Sidecar payloads are JSON by construction; the schema pins each entry as a record list. */
+const assistantStreamListSchema = z.custom<readonly AssistantStreamRecord[]>(
+  value => Array.isArray(value),
+  'expected an Assistant stream record list',
+)
 const historyValueSchema: z.ZodType<HistoryValue> = z.object({
   records: z.array(historyEntrySchema),
   hasMore: z.boolean(),
+  streams: z.array(assistantStreamListSchema),
 }) as z.ZodType<HistoryValue>
 
 function timed<T>(run: () => T): Timed<T> {
@@ -280,21 +290,28 @@ function buildFixture(): HistoryFixture {
     appendSeparator(prefix, separator)
   }
 
+  const settlement: SessionEventMap['assistant/message'] = {
+    turn: 1, step: 1, message, firstTokenTime: TIME_ZERO,
+  }
   const rawEvents = [...prefix]
   const compactEvents = [...prefix]
-  append(rawEvents, 'assistant/message', { turn: 1, step: 1, message, stream: rawStream }, { surfaceOp: 'append' })
-  append(compactEvents, 'assistant/message', {
-    turn: 1, step: 1, message, stream: compactStream,
-  }, { surfaceOp: 'append' })
+  append(rawEvents, 'assistant/message', settlement, { surfaceOp: 'append' })
+  append(compactEvents, 'assistant/message', settlement, { surfaceOp: 'append' })
   return {
     rawEvents,
     compactEvents,
+    rawStream,
+    compactStream,
     rawRecordCount: rawStream.length,
     compactRecordCount: compactStream.length,
   }
 }
 
-function foldDefinition(kind: string, target: string): ConversationNodeDefinition<FoldState> {
+function foldDefinition(
+  kind: string,
+  target: string,
+  streams: ReadonlyMap<number, readonly AssistantStreamRecord[]>,
+): ConversationNodeDefinition<FoldState> {
   return {
     kind,
     target,
@@ -310,12 +327,14 @@ function foldDefinition(kind: string, target: string): ConversationNodeDefinitio
     start: () => ({ blocks: [], memberCount: 0 }),
     update: (context, match) => {
       if (match.event.type !== 'assistant/message') return context.state
+      const records = streams.get(match.event.seq)
+      if (records === undefined) return context.state
       const blocks = [...context.state.blocks]
       let memberCount = context.state.memberCount
       let firstTokenTime = context.state.firstTokenTime
       let firstVisibleIndex = context.state.firstVisibleIndex
       let firstVisibleTime = context.state.firstVisibleTime
-      for (const timedChunk of expandAssistantStream(match.event.data.stream)) {
+      for (const timedChunk of expandAssistantStream(records)) {
         if (timedChunk.chunk.type !== 'reasoning-delta') continue
         const chunk = timedChunk.chunk
         blocks[chunk.index] = (blocks[chunk.index] ?? '') + chunk.text
@@ -366,10 +385,13 @@ function wireEntries(events: readonly SessionEvent[]): SessionEventEntry[] {
   return events.map(wireEntry)
 }
 
-function assemble(entries: readonly SessionEventLikeEntry[]): FoldSnapshots {
+function assemble(
+  entries: readonly SessionEventLikeEntry[],
+  streams: ReadonlyMap<number, readonly AssistantStreamRecord[]> = new Map(),
+): FoldSnapshots {
   const definitions = [
-    foldDefinition('benchmark-chat-assistant', 'chat'),
-    foldDefinition('benchmark-trajectory-assistant', 'trajectory'),
+    foldDefinition('benchmark-chat-assistant', 'chat', streams),
+    foldDefinition('benchmark-trajectory-assistant', 'trajectory', streams),
   ]
   const assembler = new ConversationNodeAssembler(
     { entries: () => definitions, fallbackEntry: () => undefined },
@@ -388,29 +410,41 @@ function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
-it('reports v2 embedded stream compaction and exact replay costs', async () => {
+it('reports V5 sidecar stream compaction and exact replay costs', async () => {
   const fixture = timed(buildFixture)
   assemble(historyEntries(wireEntries(fixture.value.compactEvents.slice(0, 100))))
+
+  const settlementSeq = fixture.value.rawEvents.at(-1)!.seq
+  const rawStreams = new Map<number, readonly AssistantStreamRecord[]>([[settlementSeq, fixture.value.rawStream]])
+  const compactStreams = new Map<number, readonly AssistantStreamRecord[]>([[settlementSeq, fixture.value.compactStream]])
 
   const rawHostHeap = sampledPeakHeap((sample) => {
     const records = wireEntries(fixture.value.rawEvents)
     sample()
-    const json = JSON.stringify({ records, hasMore: false } satisfies HistoryValue)
+    const json = JSON.stringify({
+      records, hasMore: false, streams: [fixture.value.rawStream],
+    } satisfies HistoryValue)
     sample()
     return Buffer.byteLength(json)
   })
   const compactHostHeap = sampledPeakHeap((sample) => {
     const records = wireEntries(fixture.value.compactEvents)
     sample()
-    const json = JSON.stringify({ records, hasMore: false } satisfies HistoryValue)
+    const json = JSON.stringify({
+      records, hasMore: false, streams: [fixture.value.compactStream],
+    } satisfies HistoryValue)
     sample()
     return Buffer.byteLength(json)
   })
 
   const rawEntries = timed(() => wireEntries(fixture.value.rawEvents))
   const compactEntries = timed(() => wireEntries(fixture.value.compactEvents))
-  const rawValue: HistoryValue = { records: rawEntries.value, hasMore: false }
-  const compactValue: HistoryValue = { records: compactEntries.value, hasMore: false }
+  const rawValue: HistoryValue = {
+    records: rawEntries.value, hasMore: false, streams: [fixture.value.rawStream],
+  }
+  const compactValue: HistoryValue = {
+    records: compactEntries.value, hasMore: false, streams: [fixture.value.compactStream],
+  }
   const rawJson = timed(() => JSON.stringify(rawValue))
   const compactJson = timed(() => JSON.stringify(compactValue))
   const rawGzip = timed(() => gzipSync(rawJson.value).byteLength)
@@ -427,7 +461,7 @@ it('reports v2 embedded stream compaction and exact replay costs', async () => {
     sample()
     const prepared = historyEntries(parsed.records)
     sample()
-    const folded = assemble(prepared)
+    const folded = assemble(prepared, rawStreams)
     sample()
     return digest(folded)
   })
@@ -438,7 +472,7 @@ it('reports v2 embedded stream compaction and exact replay costs', async () => {
     sample()
     const prepared = historyEntries(parsed.records)
     sample()
-    const folded = assemble(prepared)
+    const folded = assemble(prepared, compactStreams)
     sample()
     return digest(folded)
   })
@@ -451,9 +485,9 @@ it('reports v2 embedded stream compaction and exact replay costs', async () => {
   const compactPreparation = timed(() => historyEntries(compactValidation.value.records))
 
   assemble(rawPreparation.value.slice(0, 100))
-  assemble(compactPreparation.value)
-  const rawFold = timed(() => assemble(rawPreparation.value))
-  const compactFold = timed(() => assemble(compactPreparation.value))
+  assemble(compactPreparation.value, compactStreams)
+  const rawFold = timed(() => assemble(rawPreparation.value, rawStreams))
+  const compactFold = timed(() => assemble(compactPreparation.value, compactStreams))
 
   const rawBytes = Buffer.byteLength(rawJson.value)
   const compactBytes = Buffer.byteLength(compactJson.value)
@@ -595,12 +629,13 @@ it('reports compact folding cost for long whitespace-prefix streams', () => {
           content: [{ type: 'reasoning', text: `${' '.repeat(members - 1)}x` }],
           source: { provider: 'benchmark', model: 'synthetic-v2' },
         }),
-        stream,
+        firstTokenTime: TIME_ZERO + 1,
       },
     } as SessionEvent<'assistant/message'>)
     const inputs = historyEntries([start, message])
-    const folded = assemble(inputs)
-    const samplesMs = Array.from({ length: 5 }, () => timed(() => assemble(inputs)).ms)
+    const streams = new Map<number, readonly AssistantStreamRecord[]>([[message.event.seq, stream]])
+    const folded = assemble(inputs, streams)
+    const samplesMs = Array.from({ length: 5 }, () => timed(() => assemble(inputs, streams)).ms)
     expect((folded.chat as readonly { readonly data: FoldState }[])[0]?.data).toMatchObject({
       memberCount: members,
       lastMemberIndex: members,

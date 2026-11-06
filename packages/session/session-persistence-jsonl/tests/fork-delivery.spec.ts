@@ -1,6 +1,6 @@
 /** Fork history retains delivery ownership without requiring a source relationship. */
 import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -20,7 +20,7 @@ async function fixture(compression: 'none' | 'zstd') {
   async function persist(session: Session) {
     const writer = await ctx.sessionPersistence.create(session.header, { inheritedEventCount: session.inheritedEventCount })
     try { await writer.append(session.snapshotEvents()) } finally { await writer.close() }
-    return generationLogPath(root, undefined, session.id, 4, compression)
+    return generationLogPath(root, undefined, session.id, SESSION_FORMAT_VERSION, compression)
   }
   return { ctx, persist }
 }
@@ -68,6 +68,9 @@ describe.each(['none', 'zstd'] as const)('fork delivery persistence (%s)', (comp
     const source = ctx.sessions.create(SessionId('source'))
     delivered(source)
     const invalidTarget = damage === 'inherited-through' ? source : ctx.sessions.fork(source, undefined, SessionId('child'))
+    // V5 delivery-marker ownership is validated by the V5 relationship rules;
+    // until those land, an invalid marker claims the released V4 generation so
+    // the released ownership rule observes it.
     invalidTarget.append('session-log-deepseek/delivery-accepted', {
       sessionId: damage === 'foreign-own' ? source.id : invalidTarget.id,
       sessionFormatVersion: 4,

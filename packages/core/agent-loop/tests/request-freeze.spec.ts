@@ -58,7 +58,6 @@ describe('loop-owned request freezing', () => {
         content: [{ type: 'text', text: 'restored assistant' }],
         source: { provider: 'mock', model: 'mock', replayState: { nested: ['opaque'] } },
       }),
-      stream: [],
     }, { surfaceOp: 'append' })
     const events = structuredClone(seed.snapshotEvents())
     const userEvent = events.find(event => event.type === 'user/message')!
@@ -102,9 +101,8 @@ describe('loop-owned request freezing', () => {
     expect(first.messages[1]).toBe(before[1])
     expect(Object.isFrozen(userEvent)).toBe(false)
     expect(Object.isFrozen(assistantEvent.data)).toBe(false)
-    expect(Object.isFrozen(assistantEvent.data.stream)).toBe(false)
     userEvent.time += 1
-    assistantEvent.data.stream.push({ type: 'chunk', time: 2, chunk: { type: 'finish', reason: { kind: 'stop' } } })
+    assistantEvent.data.interrupted = true
     before.pop()
     const held = JSON.stringify(first.messages)
     await send(agent, 'second')

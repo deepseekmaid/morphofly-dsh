@@ -16,11 +16,7 @@ const events: readonly SessionEvent[] = [
   { type: 'turn/start', seq: SessionSeq(1), time: 1, data: { turn: 1 } },
   { type: 'step/start', seq: SessionSeq(2), time: 2, data: { turn: 1, step: 1 } },
   message(3),
-  { type: 'assistant/attempt', seq: SessionSeq(4), time: 4, data: { turn: 1, step: 1, stream: [
-    { type: 'chunk', time: 3, chunk: { type: 'block-start', index: 0, blockType: 'reasoning' } },
-    { type: 'reasoning-chunks', index: 0, time0: 3, dt: [], texts: ['thinking'] },
-    { type: 'chunk', time: 4, chunk: { type: 'block-end', index: 0, block: { type: 'reasoning', text: 'thinking' } } },
-  ] } },
+  { type: 'assistant/attempt', seq: SessionSeq(4), time: 4, data: { turn: 1, step: 1 } },
   { type: 'step/end', seq: SessionSeq(5), time: 5, data: { turn: 1, step: 1 } },
   message(6),
   { type: 'step/start', seq: SessionSeq(7), time: 7, data: { turn: 1, step: 2 } },
@@ -48,17 +44,17 @@ it('nests each Step inside its Turn and retains closers at the end of the corres
   ])
   expect(rows.filter(row => ['event:1', 'event:2', 'event:7', 'event:12'].includes(row.key))
     .every(row => row.disclosure === 'open')).toBe(true)
-  expect(rows.find(row => row.key === 'event:4/chunk:1'))
-    .toEqual({ key: 'event:4/chunk:1', parent: 'event:4/chunk:0', depth: 4 })
+  // V5 settlements carry no embedded stream, so no chunk children exist under event:4.
+  expect(rows.some(row => row.key.includes('/chunk:'))).toBe(false)
   expect(model.row('event:5').getSnapshot()?.value).toBe(events[4])
   expect(model.row('event:10').getSnapshot()?.value).toBe(events[9])
   expect(model.chatAnchor('event:3')?.event).toBe(events[2])
   const hierarchy = new InspectorTableHierarchy(rows, new Map([
-    ['event:4/chunk:0', { state: 'closed', collapsed: false }],
+    ['event:2', { state: 'closed', collapsed: false }],
   ]))
   const sticky = (key: string) => hierarchy.stickyIndexes(hierarchy.rows.findIndex(row => row.key === key))
     .map(index => hierarchy.rows[index]!.key)
-  expect(sticky('event:4/chunk:1')).toEqual(['event:1', 'event:2', 'event:4', 'event:4/chunk:0'])
+  expect(sticky('event:4')).toEqual(['event:1', 'event:2'])
   expect(sticky('event:5')).toEqual(['event:1', 'event:2'])
   expect(sticky('event:8')).toEqual(['event:1', 'event:7'])
   expect(sticky('event:10')).toEqual(['event:1'])
@@ -108,12 +104,12 @@ it('keeps a live Assistant inside its Step through settlement without folding th
   expect(model.getSnapshot().find(row => row.key === key)).toEqual({ key, parent: 'event:2', depth: 2 })
   expect(model.getSnapshot().find(row => row.key === `${key}/chunk:0`)).toEqual({ key: `${key}/chunk:0`, parent: key, depth: 3 })
   source.settleAssistant(attemptId, { type: 'event', event: {
-    type: 'assistant/attempt', seq: SessionSeq(4), time: 4, data: { turn: 1, step: 1,
-      stream: [{ type: 'text-chunks', index: 0, time0: 3, dt: [], texts: ['live'] }] },
+    type: 'assistant/attempt', seq: SessionSeq(4), time: 4, data: { turn: 1, step: 1 },
   } })
   source.append(entries([events[4]!])[0]!)
   source.append(entries([events[9]!])[0]!)
   expect(model.getSnapshot().find(row => row.key === key)).toEqual({ key, parent: 'event:2', depth: 2 })
+  // The settlement retires the live chunk children: V5 keeps that stream in the Session sidecar.
   expect(new InspectorTableHierarchy(model.getSnapshot(), new Map()).rows.map(row => row.key))
-    .toEqual(['event:1', 'event:2', key, `${key}/chunk:0`, 'event:5', 'event:10'])
+    .toEqual(['event:1', 'event:2', key, 'event:5', 'event:10'])
 })

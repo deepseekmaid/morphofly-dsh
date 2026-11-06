@@ -63,14 +63,20 @@ kind: "package-reference"
       session.jsonl.zstd         # released v0, compressed root
       session.v1.jsonl.zstd      # released v1, compressed root
       session.v2.jsonl.zstd      # released v2, compressed root
-      session.v3.jsonl.zstd      # released v3/current, compressed root
+      session.v3.jsonl.zstd      # released v3, compressed root
       session.jsonl              # released v0, raw root
       session.v1.jsonl           # released v1, raw root
       session.v2.jsonl           # released v2, raw root
-      session.v3.jsonl           # released v3/current, raw root; later versions use vN
+      session.v3.jsonl           # released v3, raw root; later versions use vN
+      streams.v1/                # Assistant streams for V5 settlements
+        s<seq>.jsonl.zstd        # one {"seq":N,"stream":[...]} line per settlement; suffix follows compression
 ```
 
 会话 id 在使用前被单射转义为一个安全路径段（无遍历、无冲突）。规范化 cwd 让项目目录保持可读、便于导航；规范化相同的 cwd 字符串共享项目目录，而会话 id 仍选择不同会话目录。运行时操作选择数值最高的规范 generation，格式拒绝诊断会点名该绝对路径，让操作者能找到构建拒绝解读的原始日志。
+
+### 日志旁的 Assistant 流
+
+格式 V5 把结算的紧凑 Assistant 流移出事件。对每个 `assistant/message` 或 `assistant/attempt` 事件，持久化层把精确记录存到 `<sessionDir>/streams.v1/s<seq>.jsonl[.zstd]`——按结算序号命名，内容为一行 JSON `{"seq":N,"stream":[...]}` 并保留日志的行尾换行；编码跟随已配置的压缩方式。一个批次会在写入该批次任何主日志行之前发布其旁挂（临时文件、`fsync`、原子发布），因此主日志行绝不会先于其流出现。重试写入会复用逐字节相同的已有旁挂，内容不同则以冲突拒绝；无法解码或校验的旁挂报告为损坏。通过可选能力 `SessionHandle.readAssistantStream(seq)` 读取结算的流：返回 `undefined` 表示该序号不是 Assistant 结算或不存在，而结算已存储的流缺失或不可读时以 `SessionAssistantStreamUnavailableError` 拒绝。打开历史 V4 generation 的句柄会回退到该 generation 内嵌的流，因此迁移后仍能读取其带时间流。旁挂目录属于会话数据：任何导出方、fork 路径或备份都必须随日志一起复制 `streams.v1/`。
 
 ### 持久性与崩溃语义
 
@@ -169,6 +175,7 @@ JSONL 存储不修改实时请求前缀。只有重建历史、当前 envelope �
 - **根作用域的并发卸载不保证顺序**——Cordis 可能在提供者等待消费者清理前，已将正在卸载的消费者移出注册表。此处的依赖顺序仅覆盖移除该提供者所触发的消费者卸载。
 - **POSIX 实体化需要硬链接支持**——第一次 append 使用 `link()`，使同 id 竞态失败而不覆盖已提交日志；Windows 使用无替换 write-through rename。
 - **POSIX 写入需要匹配的预编译系统 addon**——[`node-addon-system`](../../../native/system/README.zh.md) 提供异步 flock，无须在用户侧编译。addon 缺失时拒绝写入所有权；Windows 保留其信号量实现。
+- **fork 暂不复制旁挂**——fork 出的会话继承 seeded 前缀事件，但不复制其 `streams.v1/` 文件，因此在补齐该复制之前，继承段的结算会以 `SessionAssistantStreamUnavailableError` 报告。导出路径已把旁挂条目打包在每个导出日志旁。
 
 <a id="dev-note"></a>
 ### 开发备注

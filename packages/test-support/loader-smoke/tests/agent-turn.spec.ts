@@ -92,7 +92,7 @@ describe('runFixtureTurn', () => {
     const observed: SessionEvent[] = []
     harness.setFollowup((message) => {
       harness.emit(harness.foreignSession, {
-        type: 'assistant/message', seq: 0, time: 0, data: { stream: [], message: { content: [] } },
+        type: 'assistant/message', seq: 0, time: 0, data: { message: { content: [] } },
       })
       harness.emit(harness.session, {
         type: 'step/start', seq: 0, time: 0, data: { turn: 1, step: 1 },
@@ -108,15 +108,7 @@ describe('runFixtureTurn', () => {
         data: {
           turn: 1,
           step: 1,
-          stream: [
-            { type: 'text-chunks', time0: 3, index: 0, dt: [], texts: ['partial'] },
-            {
-              type: 'chunk', time: 4,
-              chunk: {
-                type: 'usage', usage: { inputTokens: 2, outputTokens: 3, reasoningTokens: 1 },
-              },
-            },
-          ],
+          usage: { inputTokens: 2, outputTokens: 3, reasoningTokens: 1 },
         },
       })
       harness.emit(harness.session, {
@@ -127,7 +119,6 @@ describe('runFixtureTurn', () => {
         data: {
           turn: 1,
           step: 1,
-          stream: [],
           message: { content: [{ type: 'text', text: 'final answer' }] },
           usage: { inputTokens: 4, outputTokens: 5, cacheReadTokens: 6 },
         },
@@ -137,29 +128,19 @@ describe('runFixtureTurn', () => {
         data: {
           turn: 1,
           step: 2,
-          stream: [{
-            type: 'chunk', time: 6,
-            chunk: {
-              type: 'usage',
-              usage: { inputTokens: 1, outputTokens: 2, cacheWriteTokens: 7, reasoningTokens: 2 },
-            },
-          }],
+          usage: { inputTokens: 1, outputTokens: 2, cacheWriteTokens: 7, reasoningTokens: 2 },
         },
       })
       harness.emit(harness.session, {
         type: 'assistant/message', seq: 7, time: 7,
-        data: { turn: 1, step: 2, stream: [], message: { content: [{ type: 'tool-call' }] } },
+        data: { turn: 1, step: 2, message: { content: [{ type: 'tool-call' }] } },
       })
       harness.emit(harness.session, {
         type: 'assistant/attempt', seq: 8, time: 8,
-        data: {
-          turn: 1,
-          step: 3,
-          stream: [{ type: 'text-chunks', time0: 8, index: 0, dt: [], texts: ['no usage'] }],
-        },
+        data: { turn: 1, step: 3 },
       })
       harness.emit(harness.foreignSession, {
-        type: 'assistant/message', seq: 9, time: 9, data: { stream: [], message: { content: [] } },
+        type: 'assistant/message', seq: 9, time: 9, data: { message: { content: [] } },
       })
     })
 

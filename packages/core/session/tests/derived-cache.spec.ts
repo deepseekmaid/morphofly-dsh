@@ -35,7 +35,6 @@ describe('derived-message cache', () => {
     expect(session.deriveMessages()).toEqual(scratch(session))
     userText(session, 'two')
     session.append('assistant/message', {
-      stream: [],
       turn: 1, step: 1,
       message: createMessage({
         role: 'assistant',
@@ -48,7 +47,6 @@ describe('derived-message cache', () => {
     }, { surfaceOp: 'append' })
     expect(session.deriveMessages()).toEqual(scratch(session))
     session.append('assistant/message', {
-      stream: [],
       turn: 1, step: 2,
       message: createMessage({
         role: 'assistant',
@@ -128,7 +126,6 @@ describe('Session.deriveEventMessage — the per-event projection', () => {
     const boundary = session.append('step/start', { turn: 1, step: 1 })
     expect(session.deriveEventMessage(boundary)).toBeNull()
     const empty = session.append('assistant/message', {
-      stream: [],
       turn: 1, step: 1,
       message: createMessage({
         role: 'assistant',

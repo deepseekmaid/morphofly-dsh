@@ -29,7 +29,7 @@ function historicalEvents(): SessionEvent[] {
     { type: 'user/message', seq: SessionSeq(1), time: 2, surfaceOp: 'append',
       data: createUserMessage({ content: [{ type: 'text', text: 'Private main conversation' }], source: { kind: 'user' } }) },
     { type: 'step/start', seq: SessionSeq(2), time: 3, data: { turn: 1, step: 1 } },
-    { type: 'assistant/message', seq: SessionSeq(3), time: 4, surfaceOp: 'append', data: { turn: 1, step: 1, stream: [],
+    { type: 'assistant/message', seq: SessionSeq(3), time: 4, surfaceOp: 'append', data: { turn: 1, step: 1,
       message: createAssistantMessage({ content: [{ type: 'reasoning', text: 'Original paragraph' }, { type: 'text', text: 'Main answer' }],
         source: { provider: 'main-provider', model: 'main-model' } }) } },
     { type: 'step/end', seq: SessionSeq(4), time: 5, data: { turn: 1, step: 1 } },

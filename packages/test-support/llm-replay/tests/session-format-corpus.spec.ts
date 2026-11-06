@@ -16,6 +16,9 @@ function committedSessionFixtures(directory: string): string[] {
     const path = join(directory, entry.name)
     if (entry.isDirectory()) {
       if (!excludedDirectories.has(entry.name)) files.push(...committedSessionFixtures(path))
+    } else if (/^session(?:\.[1-9]\d*)?(?:\.v[1-9]\d*)?\.streams\.jsonl$/.test(entry.name)) {
+      // Assistant-stream fixtures commit V5 sidecar streams, not Session logs.
+      continue
     } else if (entry.name.startsWith('session') && entry.name.endsWith('.jsonl')) {
       if (!/^session(?:\.[1-9]\d*)?(?:\.v[1-9]\d*)?\.jsonl$/.test(entry.name)) {
         throw new Error(`invalid committed Session filename: ${path}`)

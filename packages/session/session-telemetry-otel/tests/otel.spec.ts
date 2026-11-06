@@ -139,16 +139,6 @@ describe('OpenTelemetrySessionBackend wire', () => {
         content: [{ type: 'text', text: 'first complete chunksecond complete chunk' }],
         source: { provider: 'mock', model: 'mock' },
       }),
-      stream: [
-        {
-          type: 'text-chunks',
-          time0: 1_000,
-          index: 0,
-          dt: [7],
-          texts: ['first complete chunk', 'second complete chunk'],
-        },
-        { type: 'chunk', time: 1_007, chunk: { type: 'finish', reason: { kind: 'stop' } } },
-      ],
     }, { surfaceOp: 'append' })
     session.append('turn/end', { turn: 1, reason: { kind: 'error', error: { message: 'boom', code: 'UNKNOWN' } } })
     ctx.sessionTelemetry.emit({
@@ -549,7 +539,7 @@ describe('OpenTelemetrySessionBackend route and feedback', () => {
         session.append('step/start', { turn: 1, step: 1 })
         if (provider !== undefined) session.append('request/header', { header: { config: { provider, model: 'm' } }, reason: 'initial' })
         const message = createAssistantMessage({ content: [{ type: 'text', text: 'answer' }], source: { provider: provider ?? 'mock', model: 'm' } })
-        session.append('assistant/message', { message, stream: [], turn: 1, step: 1 }, { surfaceOp: 'append' })
+        session.append('assistant/message', { message,  turn: 1, step: 1 }, { surfaceOp: 'append' })
         session.append('step/end', { turn: 1, step: 1 })
         session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
         const request = { sessionId: session.id, messageId: message.id, rating: 'positive' as const, ifVersion: null }
@@ -622,7 +612,7 @@ describe('OpenTelemetrySessionBackend route and feedback', () => {
       parent.append('step/start', { turn: 1, step: 1 })
       parent.append('request/header', { header: { config: { provider: 'mock', model: 'm' } }, reason: 'initial' })
       const message = createAssistantMessage({ content: [{ type: 'text', text: 'inherited answer' }], source: { provider: 'mock', model: 'm' } })
-      parent.append('assistant/message', { message, stream: [], turn: 1, step: 1 }, { surfaceOp: 'append' })
+      parent.append('assistant/message', { message,  turn: 1, step: 1 }, { surfaceOp: 'append' })
       parent.append('step/end', { turn: 1, step: 1 })
       parent.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
       const child = Session.create(SessionId('cold-child'), parent.snapshotEvents(), {
@@ -679,7 +669,7 @@ describe('OpenTelemetrySessionBackend route and feedback', () => {
       session.append('step/start', { turn: 1, step: 1 })
       if (provider !== undefined) session.append('request/header', { header: { config: { provider, model: 'm' } }, reason: 'initial' })
       const message = createAssistantMessage({ content: [{ type: 'text', text: 'answer' }], source: { provider: provider ?? 'mock', model: 'm' } })
-      session.append('assistant/message', { message, stream: [], turn: 1, step: 1 }, { surfaceOp: 'append' })
+      session.append('assistant/message', { message,  turn: 1, step: 1 }, { surfaceOp: 'append' })
       session.append('step/end', { turn: 1, step: 1 })
       session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
       const handle = await ctx.sessionPersistence.create(session.header)

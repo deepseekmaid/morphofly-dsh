@@ -12,7 +12,7 @@
 import { existsSync } from 'node:fs'
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, delimiter, join } from 'node:path'
+import { basename, delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
@@ -40,16 +40,20 @@ import {
   sessionFixtureName,
   systemPromptPrecedesRequests,
   sessionFixtureNames,
+  sessionStreamFixtureNames,
   sessionHeaderVersion,
   writerSnapshotName,
   stabilizeFixtureMessageIds,
   stabilizeRefreshLog,
   tokenizeSessionFixtureCwd,
+  writeAssistantStreamFixture,
   writesCurrentSessionFixtures,
   materializeProfilePatch,
   formatSystemPromptSnapshot,
   formatToolSchemasSnapshot,
+  harvestAssistantStreams,
   latestPersistedSessionPaths,
+  renderAssistantStreamFixture,
   type HarvestedLog,
   type NormalizeContext,
   type SnapshotManifest,
@@ -65,7 +69,7 @@ import {
   type SdkUserQuestionResult,
 } from '@deepseek-ai/dsh-sdk-client'
 import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
-import { deriveReplayScript, parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
+import { deriveReplayScript, parseSessionLog, parseSessionFixtureWithStreams } from '@deepseek-ai/dsh-llm-replay'
 
 const corpusRoot = fileURLToPath(new URL('../', import.meta.url))
 
@@ -347,6 +351,8 @@ interface PersistedLog {
   readonly path: string
   readonly content: string
   readonly header: Record<string, unknown>
+  /** Exact Assistant streams the Session V5 writer committed beside this log. */
+  readonly streams?: ReadonlyMap<number, readonly import('@deepseek-ai/dsh-llm').AssistantStreamRecord[]>
 }
 
 async function jsonlFiles(dir: string): Promise<string[]> {
@@ -360,7 +366,8 @@ async function persistedLogs(sessionsRoot: string): Promise<PersistedLog[]> {
     const content = await readFile(path, 'utf8')
     expect(assertPersistedSessionVersion(basename(path), content), `${path}: current writer`).toBe(SESSION_FORMAT_VERSION)
     const header = JSON.parse(content.slice(0, content.indexOf('\n'))) as Record<string, unknown>
-    return { path, content, header }
+    const streams = await harvestAssistantStreams(dirname(path))
+    return { path, content, header, ...streams === undefined ? {} : { streams } }
   }))
 }
 
@@ -446,14 +453,30 @@ async function fixtureFiles(scenario: CorpusScenario): Promise<string[]> {
   }))
 }
 
-async function hydrateReplayFixtures(scenario: CorpusScenario, cwd: string): Promise<string[]> {
+interface HydratedReplayFixtures {
+  /** Hydrated Session logs, in role order. */
+  readonly fixtures: string[]
+  /** Hydrated stream sidecars aligned with `fixtures`; undefined when a role has none. */
+  readonly streams: (string | undefined)[]
+}
+
+async function hydrateReplayFixtures(scenario: CorpusScenario, cwd: string): Promise<HydratedReplayFixtures> {
   const root = join(cwd, '.replay-fixtures')
   await mkdir(root, { recursive: true })
-  return Promise.all((await fixtureFiles(scenario)).map(async (source) => {
+  const sources = await fixtureFiles(scenario)
+  const names = await sessionStreamFixtureNames(await readdir(scenario.dir), sources.map(file => basename(file)))
+  const fixtures = await Promise.all(sources.map(async (source) => {
     const destination = join(root, basename(source))
     await writeFile(destination, (await readFile(source, 'utf8')).replaceAll('{{cwd}}', cwd))
     return destination
   }))
+  const streams = await Promise.all(names.map(async (name) => {
+    if (name === undefined) return undefined
+    const destination = join(root, name)
+    await writeFile(destination, (await readFile(join(scenario.dir, name), 'utf8')).replaceAll('{{cwd}}', cwd))
+    return destination
+  }))
+  return { fixtures, streams }
 }
 
 /**
@@ -763,7 +786,9 @@ async function runScenario(scenario: CorpusScenario): Promise<{
   if (fixedWidthCwd) expect(JSON.stringify(cwd)).toHaveLength(192)
   const dshHome = join(cwd, '.dsh')
   const sessionsRoot = join(dshHome, 'sessions')
-  const replayFixtures = recording ? [] : await hydrateReplayFixtures(scenario, cwd)
+  const replay = recording ? { fixtures: [], streams: [] } : await hydrateReplayFixtures(scenario, cwd)
+  const replayFixtures = replay.fixtures
+  const replayStreamFiles = replay.streams
   const fixtureContents = await Promise.all((await fixtureFiles(scenario)).map(file => readFile(file, 'utf8')))
   const primaryFixture = fixtureContents[0]
   if (primaryFixture === undefined) throw new Error(`${scenario.name}: no primary session fixture`)
@@ -804,11 +829,18 @@ async function runScenario(scenario: CorpusScenario): Promise<{
   const actions = sdkActions(primaryFixture, assertions.replayStandaloneCommands === true)
   const resumeReplayFile = scenario.name === 'session-resume' && !recording
     ? join(patchRoot, 'resume-replay.json') : undefined
+  // Role-parallel committed stream sidecars: replay serves each V5 session's
+  // exact Assistant streams from the hydrated copies (an empty segment marks a
+  // role whose fixture still embeds its streams).
+  const committedStreamFiles = replayStreamFiles
   const prepareTurnReplay = async (turn: number): Promise<void> => {
     if (resumeReplayFile === undefined || parentFixture === undefined) return
-    const events = parseSessionLog(await readFile(parentFixture, 'utf8'))
-      .filter(event => 'turn' in event.data && event.data.turn === turn)
-    await writeFile(resumeReplayFile, JSON.stringify(deriveReplayScript(events)))
+    const streamFixture = replayStreamFiles[0] === undefined
+      ? undefined : await readFile(replayStreamFiles[0], 'utf8')
+    const { events, readAssistantStream } = parseSessionFixtureWithStreams(
+      await readFile(parentFixture, 'utf8'), streamFixture)
+    const turnEvents = events.filter(event => 'turn' in event.data && event.data.turn === turn)
+    await writeFile(resumeReplayFile, JSON.stringify(deriveReplayScript(turnEvents, readAssistantStream)))
   }
   const firstTurn = actions.find(action => action.kind === 'turn')
   if (firstTurn !== undefined) await prepareTurnReplay(firstTurn.turn)
@@ -824,6 +856,12 @@ async function runScenario(scenario: CorpusScenario): Promise<{
     ...parentFixture === undefined ? {} : {
       DSH_SNAPSHOT_FILE: parentFixture,
       ...childFixtures.length > 0 ? { DSH_SNAPSHOT_CHILD_FILES: childFixtures.join(delimiter) } : {},
+      ...committedStreamFiles.some(name => name !== undefined)
+        ? {
+            DSH_SNAPSHOT_STREAM_FILES: committedStreamFiles
+              .map(name => name ?? '').join(delimiter),
+          }
+        : {},
     },
     ...!recording && scenario.manifest.replay?.override === true
       ? { DSH_SNAPSHOT_OVERRIDE: join(scenario.dir, 'replay.override.json') }
@@ -1511,8 +1549,11 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
         const catalog = parentEvents.filter(event => event.type === 'subagent/catalog')
         expect(catalog).toHaveLength(expectedCount)
         expect(catalog.every(event => (event.data as JsonObject).mode === 'external')).toBe(true)
+        // V5 propagates only child Session events to the parent, so a failed
+        // child's closing text stays in the child's own log; the parent notice
+        // keeps the stable failure summary instead (see the V5 upgrade guide).
         const expectedContent = scenario.name === 'subagent-dsh-sdk-diagnostic'
-          ? 'partial child loader answer'
+          ? 'Subagent failure (provider: DSH SDK; stage: session-run; category: child-error)'
           : 'child route: mock/mock-routed/max/777; cwd:'
         for (const notice of notices) expect(JSON.stringify(notice)).toContain(expectedContent)
         const finalAssistant = parentEvents.findLastIndex(event => event.type === 'assistant/message')
@@ -1617,6 +1658,9 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       let expectedContents = retained && !refreshing
         ? await Promise.all(files.map((_, index) => readFile(join(scenarioDir, writerSnapshotName(index)), 'utf8')))
         : replayContents
+      // Volatile values the refresh already folded into the committed fixture
+      // text; the Assistant-stream sidecars apply the same replacements.
+      let streamReplacements: readonly { readonly from: string; readonly to: string }[] = []
 
       if (recording) {
         expectedContents = redactSessionSnapshotIds(stabilizeFixtureMessageIds(
@@ -1633,6 +1677,7 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
           content: log.content,
         }))
         const replacements = refreshFixtureReplacements(harvested, expectedContents)
+        streamReplacements = replacements
         const refreshed = ordered.map((log, index) => {
           const existing = expectedContents[index]
           if (existing === undefined) throw new Error(`no fixture for persisted log ${index}`)
@@ -1648,6 +1693,17 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
           ? writerSnapshotName(index)
           : sessionFixtureName(index, sessionHeaderVersion(log.content, `harvested Session ${index}`))))
         await Promise.all(expectedContents.map((stable, index) => writeFile(outputFiles[index] as string, stable)))
+        // A canonical current-generation fixture commits its exact Assistant
+        // streams beside the log; a retained writer-output oracle keeps them
+        // embedded in its released rows.
+        await Promise.all(ordered.map((log, index) => writeAssistantStreamFixture(
+          scenarioDir,
+          index,
+          sessionHeaderVersion(log.content, `harvested Session ${index}`),
+          log.streams,
+          actualContext,
+          streamReplacements,
+        )))
         files = outputFiles
         await writeHeaderSidecars(scenario, ordered, actualContext)
       }
@@ -1672,6 +1728,31 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       const actualSnapshots = normalizeSessionSnapshots(ordered.map(log => log.content), actualContext, { nativeWriterOutput: true })
       const expectedSnapshots = normalizeSessionSnapshots(expectedContents, expectedContext, { nativeWriterOutput: true })
       expect(actualSnapshots.map(records), `${scenario.name}: sessions`).toEqual(expectedSnapshots.map(records))
+      if (!recording && !refreshing) {
+        const committedStreamFiles = sessionStreamFixtureNames(await readdir(scenarioDir), files.map(file => basename(file)))
+        // A rerun regenerates volatile identities (job ids); fold the committed
+        // fixture's replacements into the sidecar view before comparing.
+        const replacements = refreshFixtureReplacements(ordered.map(log => ({
+          id: String(log.header.id),
+          createdAt: Number(log.header.createdAt),
+          ...typeof log.header.parentSession === 'string' ? { parentSession: log.header.parentSession } : {},
+          content: log.content,
+        })), expectedContents)
+        // Generated job ids reach tool-call arguments; a rerun issues fresh
+        // ones, so mask them before comparing the committed sidecar.
+        const maskJobIds = (text: string): string => text
+          .replace(/bash-[0-9a-f]{16}/gu, 'bash-{{job}}')
+          .replace(/goal-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gu, '{{goal}}')
+        await Promise.all(committedStreamFiles.map(async (streamFile, index) => {
+          if (streamFile === undefined) return
+          const log = ordered[index]
+          expect(log?.streams, `${streamFile}: run produced no Assistant-stream sidecar`).toBeDefined()
+          expect(
+            maskJobIds(renderAssistantStreamFixture(log!.streams!, actualContext, replacements)),
+            `${streamFile} mismatch`,
+          ).toBe(maskJobIds(await readFile(join(scenarioDir, streamFile), 'utf8')))
+        }))
+      }
       await verifyHeaders(scenario, ordered, actualContext, assertions.dshSdkChild?.agentConfig)
 
       // Genuine SDK protocol cases retain their secondary wire projections.

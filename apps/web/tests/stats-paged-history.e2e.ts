@@ -67,7 +67,6 @@ function buildSeed(turns: number): string {
     at({
       type: 'assistant/message',
       data: {
-        stream: [],
         turn,
         step: 1,
         message: {

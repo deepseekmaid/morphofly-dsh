@@ -1,6 +1,5 @@
 /** Reviewed synthetic tool history shared by continuation and child-catalog measurements. */
 
-import { AssistantStreamAccumulator } from '@deepseek-ai/dsh-llm/assistant-stream'
 import { MessageId, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -78,12 +77,11 @@ export function syntheticHistory(turns: number): SessionEvent[] {
     for (const step of [1, 2]) {
       if (step === 2) session.append('step/start', { turn, step })
       const reply = response(turn * 2 + step, step === 1 ? WORKLOAD.toolsPerHistoricalTurn : 0)
-      const stream = new AssistantStreamAccumulator()
-      reply.chunks.forEach((chunk, index) => { stream.push({ time: TIME_ZERO + turn * 1_000 + step * 100 + index, chunk }) })
       session.append('assistant/message', {
         turn, step,
         message: { id: MessageId('reply-' + String(turn) + '-' + String(step)), role: 'assistant', content: reply.content, source: { kind: 'model', provider: 'bench', model: 'bench' } },
-        stream: [...stream.snapshot()],
+        // V5 keeps the settled stream in the Session sidecar; the event keeps only this scalar.
+        firstTokenTime: TIME_ZERO + turn * 1_000 + step * 100,
       }, { surfaceOp: 'append' })
       for (const block of reply.content) {
         if (block.type !== 'tool-call') continue

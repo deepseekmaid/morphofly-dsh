@@ -21,8 +21,9 @@ interface UserMessage extends MessageBase {
 /**
  * The merge-extensible, append-only source of truth for an agent interaction.
  * Message history is derived from this log. Every event is lossless JSON and
- * sequence numbers stay contiguous. Assistant attempt events embed their exact
- * compact raw streams so persistence stores one durable settlement per attempt.
+ * sequence numbers stay contiguous. Assistant settlement events keep only the
+ * scalars synchronous folds read; persistence stores their exact compact raw
+ * streams in Session-local sidecars.
  */
 interface SessionEventMap {
   /**
@@ -90,17 +91,25 @@ interface SessionEventMap {
     turn: number
     step: number
     message: AssistantMessage
-    /** Exact timed model stream, compacted without joining delta boundaries. */
-    stream: AssistantStreamRecord[]
     usage?: TokenUsage
     interrupted?: true
+    /** Epoch milliseconds of the first output token; absent when the stream carried none. */
+    firstTokenTime?: number
   }
   /**
-   * One model attempt that committed no surface message. The embedded stream
-   * preserves a failed, retried, cancelled, or stream-error attempt that
-   * reached settlement without fabricating model-visible history.
+   * One model attempt that committed no surface message. The Session-local
+   * sidecar preserves the exact timed stream of a failed, retried, cancelled,
+   * or stream-error attempt that reached settlement without fabricating
+   * model-visible history; the event keeps only the scalars that synchronous
+   * folds need.
    */
-  'assistant/attempt': { turn: number; step: number; stream: AssistantStreamRecord[] }
+  'assistant/attempt': {
+    turn: number
+    step: number
+    usage?: TokenUsage
+    /** Epoch milliseconds of the first output token; absent when the stream carried none. */
+    firstTokenTime?: number
+  }
   /**
    * The model requested one tool invocation: `name` with the raw `arguments`
    * JSON string exactly as the model produced it (unparsed). `callId` pairs the
@@ -351,7 +360,7 @@ type SurfaceOp =
 type SurfaceIntent<T extends SurfaceEventType = SurfaceEventType> = {
   surfaceOp: SurfaceOp
 } & (T extends 'assistant/message' ? {
-  /** Assistant messages embed their provider stream instead of citing source events. */
+  /** Assistant messages never cite earlier source events. */
   sourceEventSeqs?: never
 } : {
   /** Complete non-empty set of known earlier source-event seqs. */
@@ -519,8 +528,8 @@ declare class Session {
    * Restore a detached session by adopting an independently owned or deeply frozen seed.
    * Runtime-required event fields, event envelopes, sequence continuity, surface
    * transitions, and header fields are validated without copying or freezing events.
-   * Embedded Assistant streams remain opaque until a stream consumer or storage
-   * verifier reads them.
+   * Assistant settlement scalars are validated; the timed stream stays in the
+   * Session-local sidecar.
    * @param id - restored session identity.
    * @param seed - independently owned or deeply frozen events.
    * @param header - independently owned storage metadata.
@@ -595,8 +604,8 @@ declare class Session {
    *   declare how it joins the surface, the sole source of derived model
    *   history) and
    *   rejected by the compiler for non-surface types like `turn/start` or
-   *   `assistant/attempt`. Assistant messages embed their exact provider
-   *   stream and cannot cite top-level source events.
+   *   `assistant/attempt`. Assistant messages cannot cite top-level source
+   *   events.
    * @returns the logged event — its assigned `seq`/`time` plus the SNAPSHOT of
    *   `data` that entered the log, so reading `event.data` back sees the logged
    *   value, never the caller's still-mutable input.
@@ -622,6 +631,34 @@ declare class Session {
     data: SessionEventMap[T],
     ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []
     ): SessionEvent<T>;
+  /**
+   * Append one event together with a non-durable side payload.
+   *
+   * A persistence writer claims the payload during the append's synchronous
+   * `session/event` dispatch; see {@link takeAssistantStream}. A payload that
+   * no writer claims is dropped when the append returns.
+   * @param type - event type.
+   * @param data - event payload.
+   * @param carry - side payload accompanying this event.
+   * @param opts - surface placement, required for message-producing event types.
+   * @returns the logged event, as {@link append}.
+   */
+  appendWithCarry<T extends SessionEventType>(
+    type: T,
+    data: SessionEventMap[T],
+    carry: SessionAppendCarry,
+    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []
+  ): SessionEvent<T>;
+  /**
+   * Claim the side payload carried by one append.
+   *
+   * Persistence writers call this from their synchronous `session/event`
+   * listener. A payload is returned at most once; a second claim returns
+   * undefined.
+   * @param seq - the appended event's sequence.
+   * @returns the carried Assistant stream, or undefined when none was carried or already claimed.
+   */
+  takeAssistantStream(seq: SessionSeq): readonly AssistantStreamRecord[] | undefined;
   /**
    * The {@link EpochHeader} in force after the log's last header event — the
    * header the NEXT request will be compared against — or undefined before

@@ -52,3 +52,13 @@ native/system/test/bin/
 
 # Generated company-signed CUA release record.
 /packages/experimental/cua-macos/cua-helper.json
+
+# devflow 运行产物
+runs/
+
+# Local tool scratch (pinned pnpm download, temporary tsconfigs)
+/.tmp-pnpm/
+/.tmp-tsconfig*.json
+
+# Any remaining local scratch files
+/.tmp-*

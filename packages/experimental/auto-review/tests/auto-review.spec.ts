@@ -204,7 +204,6 @@ function appendAssistant(
   session.append('assistant/message', {
     turn,
     step,
-    stream: [],
     message: createMessage({
       role: 'assistant',
       content,

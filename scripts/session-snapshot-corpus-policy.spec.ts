@@ -11,7 +11,12 @@ const completeV0 = {
   },
 } as const
 
-const adjacent = [1, 2].map(version => ({
+// Every generation between zero and the current writer needs direct adjacent
+// coverage; the retained baseline (v3) supplies its own.
+const adjacent = Array.from(
+  { length: SESSION_FORMAT_VERSION - 1 },
+  (_value, index): number => index + 1,
+).filter(version => version !== 3).map(version => ({
   key: `sdk/v${version}`,
   selectedVersions: [version],
   retained: { version, coverage: ['adjacent-migration'] as const },
@@ -22,7 +27,7 @@ const current = { key: 'session/current', selectedVersions: Array<number>(8).fil
 describe('recorded-session corpus policy', () => {
   it('keeps a V3 majority as migration input without requiring current-generation successors', () => {
     expect(assertSnapshotCorpusPolicy([
-      baseline,
+      { ...baseline, selectedVersions: Array<number>(10).fill(3) },
       {
         key: 'session/multi-hop',
         selectedVersions: [0, 0, 0],
@@ -31,12 +36,22 @@ describe('recorded-session corpus policy', () => {
       { key: 'session/packed', selectedVersions: [0], retained: { version: 0, coverage: ['packed-row'] } },
       { key: 'session/retry', selectedVersions: [0], retained: { version: 0, coverage: ['retry-failure'] } },
       ...adjacent,
-    ])).toEqual({ currentRoles: 0, baselineRoles: 8, retainedRoles: 5 + adjacent.length, retainedScenarios: 3 + adjacent.length })
+    ])).toEqual({
+      currentRoles: 0,
+      baselineRoles: 10,
+      retainedRoles: 5 + adjacent.length,
+      retainedScenarios: 3 + adjacent.length,
+    })
   })
 
   it('accepts current-writer owners alongside retained V3 replay input', () => {
     expect(assertSnapshotCorpusPolicy([baseline, current, completeV0, ...adjacent]))
-      .toEqual({ currentRoles: 8, baselineRoles: 8, retainedRoles: 3, retainedScenarios: 3 })
+      .toEqual({
+        currentRoles: 8,
+        baselineRoles: 8,
+        retainedRoles: 1 + adjacent.length,
+        retainedScenarios: 1 + adjacent.length,
+      })
   })
 
   it.each([
@@ -48,7 +63,12 @@ describe('recorded-session corpus policy', () => {
       { key: 'sdk/mixed', selectedVersions: [parent, child] },
       completeV0,
       ...adjacent,
-    ])).toEqual({ currentRoles: 9, baselineRoles: 1, retainedRoles: 3, retainedScenarios: 3 })
+    ])).toEqual({
+      currentRoles: 9,
+      baselineRoles: 1,
+      retainedRoles: 1 + adjacent.length,
+      retainedScenarios: 1 + adjacent.length,
+    })
   })
 
   it('rejects refreshing away every direct V3 migration input', () => {
@@ -133,11 +153,13 @@ describe('recorded-session corpus policy', () => {
     }))
     expect(assertSnapshotCorpusPolicy([
       baseline, current,
-      { ...completeV0, selectedVersions: Array<number>(9).fill(0) }, ...adjacent, ...retiredOffice,
+      { ...completeV0, selectedVersions: Array<number>(13 - adjacent.length - retiredOffice.length).fill(0) },
+      ...adjacent, ...retiredOffice,
     ]).retainedRoles).toBe(13)
     expect(() => assertSnapshotCorpusPolicy([
       baseline, current,
-      { ...completeV0, selectedVersions: Array<number>(10).fill(0) }, ...adjacent, ...retiredOffice,
+      { ...completeV0, selectedVersions: Array<number>(14 - adjacent.length - retiredOffice.length).fill(0) },
+      ...adjacent, ...retiredOffice,
     ])).toThrow('Session corpus retains 14 historical roles; maximum is 13')
     expect(() => assertSnapshotCorpusPolicy([
       { ...baseline, selectedVersions: [3] }, completeV0, ...adjacent,

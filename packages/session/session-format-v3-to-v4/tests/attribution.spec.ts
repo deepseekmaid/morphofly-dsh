@@ -1,10 +1,10 @@
 /** Unknown producer attribution survives the native codec and detached Session reader. */
 import { describe, expect, it } from 'vitest'
-import { Session, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
+import { Session, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import { SessionFormatEventCollector } from '@deepseek-ai/dsh-session-format'
 import type { SessionFormatEvent } from '@deepseek-ai/dsh-session-format'
 import { releasedV4SessionFormatCodec as codec, restoreReleasedV4Artifact } from '../src/index.ts'
+import { restoreV4AsCurrentSessionInputs } from './v4-target-catalog.ts'
 
 const header = { version: 4, id: 'unknown-attribution', createdAt: 1, isSeeded: false, delegationDepth: 0 }
 
@@ -31,9 +31,10 @@ describe('uninstalled producer attribution', () => {
     const restored = restoreReleasedV4Artifact(artifact, new Set(input.map(event => event.type)))
     expect(restored.events).toEqual(input)
     // The format reader validates stored JSON; adoption validates the current Session fields.
+    const current = restoreV4AsCurrentSessionInputs(restored)
     const session = Session.fromRestore(
-      SessionId(header.id), restored.events as readonly SessionEvent[], restored.header as unknown as SessionHeader,
-      SessionLogOffset(restored.inheritedEventCount), 'detached',
+      current.header.id, current.events, current.header,
+      SessionLogOffset(current.inheritedEventCount), 'detached',
     )
     expect(session.deriveMessages()).toEqual([message])
     expect(restored.events.map(event => JSON.stringify(codec.encodeEvent(event)))).toEqual(physical)

@@ -19,7 +19,10 @@ import { fileURLToPath } from 'node:url'
 import type { Browser, Page, Route, WebSocketRoute } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
-import { ToolCallId, expandAssistantStream } from '@deepseek-ai/dsh-llm'
+import {
+  ToolCallId, expandAssistantStream,
+  type AssistantStreamRecord, type TimedStreamChunk,
+} from '@deepseek-ai/dsh-llm'
 import { SessionId, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type { SessionListValue } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
@@ -55,6 +58,25 @@ type SessionListResponse = { result: RemoteResult<SessionListValue> }
 function systemPromptText(session: Session): string | undefined {
   const message = session.deriveMessages().find(candidate => candidate.role === 'system')
   return message?.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('')
+}
+
+/** Expand the Assistant streams V5 stores beside the log for the given settlements. */
+async function settlementChunks(
+  scaffold: WebScaffold,
+  sessionId: SessionId,
+  settlements: readonly SessionEvent[],
+): Promise<readonly TimedStreamChunk[]> {
+  const handle = await scaffold.ctx.sessionPersistence.open(sessionId, 'read')
+  try {
+    const records: AssistantStreamRecord[] = []
+    for (const event of settlements) {
+      if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') continue
+      records.push(...await handle.readAssistantStream?.(event.seq) ?? [])
+    }
+    return expandAssistantStream(records)
+  } finally {
+    await handle.close()
+  }
 }
 
 describe('web e2e: fresh round trip through the real assembly', () => {
@@ -296,10 +318,9 @@ describe('web e2e: fresh round trip through the real assembly', () => {
     const turnEnds = sessionEvents.filter(e => e.type === 'turn/end')
     expect(turnEnds.length).toBe(1)
     expect((turnEnds[0] as SessionEvent & { data: { reason: { kind: string } } }).data.reason.kind).toBe('completed')
-    // Embedded stream members are the authoritative incrementality proof.
-    expect(sessionEvents.flatMap(e => e.type === 'assistant/message' || e.type === 'assistant/attempt'
-      ? expandAssistantStream(e.data.stream)
-      : []).length).toBeGreaterThan(10)
+    // The V5 sidecar's stream members are the authoritative incrementality proof.
+    if (settledSessionId === undefined) throw new Error('the drive turn did not publish a session id')
+    expect((await settlementChunks(scaffold, settledSessionId, sessionEvents)).length).toBeGreaterThan(10)
   }, 60_000)
 
   it.skipIf(MODE === 'record')('matches the conversation aria golden with stable anchors', async () => {

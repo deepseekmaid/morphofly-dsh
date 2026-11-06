@@ -1,5 +1,5 @@
 ---
-description: "原始 Session 日志与 Chat group/node 虚拟表格，支持流式分片子行、分页和更新高亮。"
+description: "原始 Session 日志与 Chat group/node 虚拟表格，支持直播流式分片子行、分页和更新高亮。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-通过可选的[开发者工具组合包](../inspector-profile/README.zh.md)检查原始 Session 日志与 Chat 结构。从 Sidebar 的新建 tab 菜单或引导页打开**会话数据诊断**，再从左上角选择**原始数据**或**对话分组**。可以沿对象引用查看 Node、Turn 和 Step，也可以将选中 Node 定位到 Chat。流式分片显示为子行，Chat 更新时对应行短暂高亮。两种展示均支持更早历史和可调整高度的详情，不显示 composer。
+通过可选的[开发者工具组合包](../inspector-profile/README.zh.md)检查原始 Session 日志与 Chat 结构。从 Sidebar 的新建 tab 菜单或引导页打开**会话数据诊断**，再从左上角选择**原始数据**或**对话分组**。可以沿对象引用查看 Node、Turn 和 Step，也可以将选中 Node 定位到 Chat。直播流式分片显示为子行，Chat 更新时对应行短暂高亮。两种展示均支持更早历史和可调整高度的详情，不显示 composer。
 
 ## 目录
 
@@ -30,7 +30,7 @@ kind: "package-reference"
 
 筛选后的表格保留匹配行及其父级上下文，初始展开折叠父级。仅作上下文的类型使用淡色，不计入匹配行数。新增和分页加载的行沿用已确认的筛选。确认后重置选中、手动折叠和尾部预留空白，并回到顶部。沿对象引用或从 Chat 选取元素时，若目标行被排除，会先清除筛选再定位该行。
 
-会话日志按 `turn/start` 到 `turn/end` 分组，内部再按 `step/start`–`step/end` 分组。start 原始记录作为吸顶组头，end 保留为组尾的原始子行。Turn 和 Step 完成后仍保持展开，可手动折叠。两个 Step 之间的记录属于 Turn，已加载区间之外的记录不分组。不伪造缺失的 start：加载到更早的 start 后，再为现有行补上层级。Assistant stream 在 Step 内保留自身嵌套。
+会话日志按 `turn/start` 到 `turn/end` 分组，内部再按 `step/start`–`step/end` 分组。start 原始记录作为吸顶组头，end 保留为组尾的原始子行。Turn 和 Step 完成后仍保持展开，可手动折叠。两个 Step 之间的记录属于 Turn，已加载区间之外的记录不分组。不伪造缺失的 start：加载到更早的 start 后，再为现有行补上层级。直播 Assistant 分片在 Step 内保留自身嵌套；存储的 V5 结算只显示一行，因为其带时间流保存在会话的 `streams.v1` 旁挂中。
 
 Assistant 日志将原始带时间分片放到对应的 `block-start` 下，包括文本、推理和工具调用参数 delta。未闭合 block 默认展开；`block-end` 自动收起对应 block，之后可手动重新展开。历史中已闭合的 block 默认收起。直播分片归入同一 attempt 行，结算后由持久化事件替换。对话分组将实际 group 成员放在 group 下方；隐藏或未列出的已物化 Node 仍作为根行，按事件锚点插在已有根行之间，不会统一追加到最后一个 Turn 后，也不由检查器虚构分组归属。新增与更新短暂高亮，但系统要求减少动画时不播放。
 
@@ -48,7 +48,7 @@ Assistant 日志将原始带时间分片放到对应的 `block-start` 下，包�
 
 缺失、空内容或展开后仍隐藏的展示位置不会阻止定位。事件坐标可用时，Inspector 按事件距离依次尝试同一 Step、同一 Turn、其他已加载 Turn 中的附近内容。现有 Group 和 Turn 展示位置也可作为回退位置。没有可呈现的候选时，Inspector 高亮当前可见的 Chat 列，不移动它。
 
-选择会话日志行时，将[原始日志坐标](src/client/views/session-log/chat-target.ts)交给同一 DOM 查找流程，保留日志展示形式和 JSON 详情。Inspector 读取现有 Chat 快照，优先匹配工具调用身份、精确事件锚点和所属 Assistant step，再使用同一套回退选择。流式子行沿用所属事件，并在可用时优先匹配推理或回复分片。目标缺失时不加载历史，也不切换当前 View；Chat 为空时没有可高亮区域。
+选择会话日志行时，将[原始日志坐标](src/client/views/session-log/chat-target.ts)交给同一 DOM 查找流程，保留日志展示形式和 JSON 详情。Inspector 读取现有 Chat 快照，优先匹配工具调用身份、精确事件锚点和所属 Assistant step，再使用同一套回退选择。直播流式子行沿用所属事件，并在可用时优先匹配推理或回复分片。目标缺失时不加载历史，也不切换当前 View；Chat 为空时没有可高亮区域。
 
 展示形式下拉框旁的瞄准按钮在已显示的主 Chat 上覆盖透明的点击拦截蒙层。Inspector 使用 `elementsFromPoint()` 排除自身蒙层和预览层，再匹配底下元素的现有 data 属性。点击后选中当前 Inspector 展示形式中的对应记录，展开表格祖先并打开详情，不会激活底下的 Chat 控件。滚轮操作转发给下方 Chat 滚动区域。Esc、再次点击瞄准按钮、切换展示形式或 Session、隐藏或关闭 Inspector，以及窗口失焦都会取消选取。每个插件实例同一时刻只有一个选取器有效，不同实例不会互相取消。插件卸载会释放自己的选取器，不调用面板回调，并阻止旧面板重新启动选取。
 
