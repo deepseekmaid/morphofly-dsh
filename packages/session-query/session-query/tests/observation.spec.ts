@@ -48,6 +48,8 @@ interface StoredEntry {
   header: SessionHeader
   events: SessionEvent[]
   revision: string
+  /** Physical artifact size the stub backend reports through `stat`. */
+  sizeBytes?: number
 }
 
 interface StubCounters {
@@ -92,6 +94,7 @@ function stubPersistence(
     return Promise.resolve({
       header: structuredClone(entry.header),
       revision: SessionPersistenceRevision(entry.revision),
+      ...entry.sizeBytes === undefined ? {} : { sizeBytes: entry.sizeBytes },
     })
   }
   const open = (id: SessionIdType, access: SessionAccess): Promise<SessionHandle> => {
@@ -786,6 +789,140 @@ describe('SessionObservationReader cold projections', () => {
       code: 'SESSION_QUERY_CORRUPT_SESSION',
       message: expect.stringContaining('failed to project') as string,
     })
+    await ctx.fiber.dispose()
+  })
+})
+
+describe('SessionObservationReader cold open guard', () => {
+  it('refuses a cold open whose estimated heap exceeds its share of free heap', async () => {
+    const ctx = await readerContext()
+    const meta = header('huge-cold')
+    const store = new Map([[meta.id, {
+      header: meta,
+      events: [messageEvent(0, 'x')],
+      revision: 'r1',
+      sizeBytes: 8 * 1024 ** 3,
+    }]])
+    const counters = { stat: 0, open: 0, read: 0 }
+    ctx.provide('sessionPersistence', stubPersistence(store, counters))
+
+    await expect(new SessionObservationReader(ctx).read(meta.id)).rejects.toMatchObject({
+      code: 'SESSION_QUERY_SESSION_TOO_LARGE',
+      message: expect.stringContaining('too large to open') as string,
+    })
+    // Refusal happens before the log is opened, so nothing is materialized.
+    expect(counters.open).toBe(0)
+    await ctx.fiber.dispose()
+  })
+
+  it('serves a cached observation instead of re-pricing it against the current heap', async () => {
+    const ctx = await readerContext()
+    const meta = header('cached-then-huge')
+    const entry = { header: meta, events: [messageEvent(0, 'kept')], revision: 'r1', sizeBytes: 1024 }
+    const store = new Map([[meta.id, entry]])
+    const counters = { stat: 0, open: 0, read: 0 }
+    ctx.provide('sessionPersistence', stubPersistence(store, counters))
+    const reader = new SessionObservationReader(ctx)
+
+    using first = await reader.read(meta.id, { projectionMode: 'none' })
+    entry.sizeBytes = 8 * 1024 ** 3
+    using second = await reader.read(meta.id, { projectionMode: 'none' })
+
+    expect(second.events).toBe(first.events)
+    expect(counters.open).toBe(1)
+    await ctx.fiber.dispose()
+  })
+
+  it('opens an unpriced backend without a guard or a byte estimate', async () => {
+    const ctx = await readerContext()
+    const meta = header('unpriced-cold')
+    const store = new Map([[meta.id, { header: meta, events: [messageEvent(0, 'plain')], revision: 'r1' }]])
+    const counters = { stat: 0, open: 0, read: 0 }
+    ctx.provide('sessionPersistence', stubPersistence(store, counters))
+
+    using observed = await new SessionObservationReader(ctx).read(meta.id, { projectionMode: 'none' })
+
+    expect(observed.cursor).toBe(0)
+    expect(counters.open).toBe(1)
+    await ctx.fiber.dispose()
+  })
+
+  it('disables the guard when the heap share is zero', async () => {
+    const ctx = await readerContext()
+    const meta = header('guard-off')
+    const store = new Map([[meta.id, {
+      header: meta,
+      events: [messageEvent(0, 'x')],
+      revision: 'r1',
+      sizeBytes: 8 * 1024 ** 3,
+    }]])
+    const counters = { stat: 0, open: 0, read: 0 }
+    ctx.provide('sessionPersistence', stubPersistence(store, counters))
+    const reader = new SessionObservationReader(ctx, 5, { coldOpenHeapShare: 0 })
+
+    using observed = await reader.read(meta.id, { projectionMode: 'none' })
+
+    expect(observed.cursor).toBe(0)
+    expect(counters.open).toBe(1)
+    await ctx.fiber.dispose()
+  })
+})
+
+describe('SessionObservationReader cache byte budget', () => {
+  interface BudgetContext {
+    ctx: Context
+    store: Map<SessionIdType, StoredEntry>
+    counters: StubCounters
+  }
+
+  function budgetedContext(ids: readonly string[]): Promise<BudgetContext> {
+    return readerContext().then((ctx) => {
+      const store = new Map<SessionIdType, StoredEntry>()
+      for (const id of ids) {
+        const meta = header(id)
+        store.set(meta.id, { header: meta, events: [messageEvent(0, id)], revision: 'r1', sizeBytes: 2 * 1024 * 1024 })
+      }
+      const counters = { stat: 0, open: 0, read: 0 }
+      ctx.provide('sessionPersistence', stubPersistence(store, counters))
+      const result: BudgetContext = { ctx, store, counters }
+      return result
+    })
+  }
+
+  it('evicts the least-recently-used entry past the byte budget', async () => {
+    const { ctx, counters } = await budgetedContext(['budget-a', 'budget-b'])
+    const reader = new SessionObservationReader(ctx, 5, { cacheBytes: 3 * 1024 * 1024, coldOpenHeapMultiplier: 1 })
+    const first = SessionId('budget-a')
+    const second = SessionId('budget-b')
+
+    const cached = await reader.read(first, { projectionMode: 'none' })
+    cached[Symbol.dispose]()
+    const kept = await reader.read(second, { projectionMode: 'none' })
+    expect(kept.cursor).toBe(0)
+    kept[Symbol.dispose]()
+    expect(counters.open).toBe(2)
+
+    using reloaded = await reader.read(first, { projectionMode: 'none' })
+
+    expect(counters.open).toBe(3)
+    expect(reloaded.cursor).toBe(0)
+    await ctx.fiber.dispose()
+  })
+
+  it('keeps serving a pinned entry past the byte budget until its lease releases', async () => {
+    const { ctx, counters } = await budgetedContext(['pinned-a', 'pinned-b'])
+    const reader = new SessionObservationReader(ctx, 5, { cacheBytes: 3 * 1024 * 1024, coldOpenHeapMultiplier: 1 })
+
+    const pinned = await reader.read(SessionId('pinned-a'), { projectionMode: 'none' })
+    const kept = await reader.read(SessionId('pinned-b'), { projectionMode: 'none' })
+    const again = await reader.read(SessionId('pinned-a'), { projectionMode: 'none' })
+
+    expect(kept.cursor).toBe(0)
+    expect(again.events).toBe(pinned.events)
+    expect(counters.open).toBe(2)
+    pinned[Symbol.dispose]()
+    kept[Symbol.dispose]()
+    again[Symbol.dispose]()
     await ctx.fiber.dispose()
   })
 })

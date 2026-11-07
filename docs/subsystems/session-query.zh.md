@@ -360,6 +360,7 @@ type SessionQueryErrorCode =
   | 'SESSION_QUERY_PERSISTENCE_FAILED'
   | 'SESSION_QUERY_SEARCH_DISABLED'
   | 'SESSION_QUERY_SESSION_NOT_FOUND'
+  | 'SESSION_QUERY_SESSION_TOO_LARGE'
   | 'SESSION_QUERY_STALE_CURSOR'
   | 'SESSION_QUERY_SOURCE_CONFLICT'
 ```
@@ -386,6 +387,7 @@ Exact reads, filters, and traces are backend-independent concrete behavior. A ba
  * @param sessionId - logical Session identity.
  * @param options - cancellation and projection selection for this read.
  * @returns a caller-owned observation lease.
+ * @throws {@link SessionQueryError} `SESSION_QUERY_SESSION_TOO_LARGE` when a cold open exceeds its heap share.
  */
 observeSession( sessionId: SessionId, options: SessionObservationOptions = {}, ): Promise<SessionObservation>
 

@@ -51,6 +51,9 @@ kind: "package-reference"
 | `readWindowMax` | `50` | 继承的 `readEvent()` 的 `before`/`after` 原始事件数上限 |
 | `persistedReadConcurrency` | `4` | 继承批量读取的并发持久化日志读取数 |
 | `preparedSessionCacheSize` | `5` | 继承的 `observeSession` 读取器为复用保留的冷 prepared-Session 观察数 |
+| `preparedSessionCacheBytes` | `128 MiB` | 继承读取器为缓存冷观察保留的估算堆（`0` 关闭字节上限） |
+| `coldOpenHeapShare` | `0.5` | 继承的 `observeSession` 单次冷打开可估算占用的空闲 V8 堆比例，超出即拒绝（`0` 关闭护栏） |
+| `coldOpenHeapMultiplier` | `8` | 冷打开与缓存条目每存储产物字节对应的估算堆字节 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-session-query-sqlite)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -68,7 +71,7 @@ kind: "package-reference"
 
 ### 失败与恢复
 
-带类型的 `SessionQueryError` 失败携带稳定代码：搜索配置为关闭时 `SESSION_QUERY_SEARCH_DISABLED`；索引无法打开或对账时 `SESSION_QUERY_INDEX_FAILED`；搜索目标不存在时 `SESSION_QUERY_SESSION_NOT_FOUND`；语料库在分页之间变化时 `SESSION_QUERY_STALE_CURSOR`——请重试完整的搜索调用；游标不属于该请求时 `SESSION_QUERY_INVALID_CURSOR`。取消在同步 SQLite 调用之间被尊重；已在 JavaScript 线程上执行的语句无法被中断。
+带类型的 `SessionQueryError` 失败携带稳定代码：搜索配置为关闭时 `SESSION_QUERY_SEARCH_DISABLED`；索引无法打开或对账时 `SESSION_QUERY_INDEX_FAILED`；搜索目标不存在时 `SESSION_QUERY_SESSION_NOT_FOUND`；语料库在分页之间变化时 `SESSION_QUERY_STALE_CURSOR`——请重试完整的搜索调用；游标不属于该请求时 `SESSION_QUERY_INVALID_CURSOR`；继承的冷打开会超过空闲堆份额时 `SESSION_QUERY_SESSION_TOO_LARGE`。取消在同步 SQLite 调用之间被尊重；已在 JavaScript 线程上执行的语句无法被中断。
 
 -----
 

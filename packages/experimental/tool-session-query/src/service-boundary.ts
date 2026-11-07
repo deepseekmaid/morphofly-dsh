@@ -79,6 +79,10 @@ const SAFE_SESSION_QUERY_FAILURES = {
     code: 'SESSION_QUERY_SESSION_NOT_FOUND',
     message: 'session was not found',
   },
+  SESSION_QUERY_SESSION_TOO_LARGE: {
+    code: 'SESSION_QUERY_SESSION_TOO_LARGE',
+    message: 'session is too large to open within this deployment heap',
+  },
   SESSION_QUERY_STALE_CURSOR: {
     code: 'SESSION_QUERY_STALE_CURSOR',
     message: 'session history changed while paging; retry the complete search call',

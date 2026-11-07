@@ -38,7 +38,10 @@ import type {
   SessionTitleObservationResult,
 } from './types.ts'
 import {
+  SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_MULTIPLIER,
+  SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_SHARE,
   SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
+  SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_BYTES,
   SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
   SESSION_QUERY_READ_WINDOW_MAX,
   SessionQueryError,
@@ -63,7 +66,10 @@ export type * from './types.ts'
 export { SessionSearchCursor } from './cursor.ts'
 export type { Config, SessionQueryErrorCode } from './config.ts'
 export {
+  SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_MULTIPLIER,
+  SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_SHARE,
   SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
+  SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_BYTES,
   SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
   SESSION_QUERY_READ_WINDOW_MAX,
   SessionQueryError,
@@ -127,8 +133,35 @@ export abstract class SessionQueryEngine extends Service {
         'SESSION_QUERY_INVALID_CONFIG',
       )
     }
+    const preparedSessionCacheBytes = config.preparedSessionCacheBytes
+      ?? SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_BYTES
+    if (!Number.isSafeInteger(preparedSessionCacheBytes) || preparedSessionCacheBytes < 0) {
+      throw new SessionQueryError(
+        'session-query: preparedSessionCacheBytes must be a non-negative safe integer',
+        'SESSION_QUERY_INVALID_CONFIG',
+      )
+    }
+    const coldOpenHeapShare = config.coldOpenHeapShare ?? SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_SHARE
+    if (!Number.isFinite(coldOpenHeapShare) || coldOpenHeapShare < 0 || coldOpenHeapShare > 1) {
+      throw new SessionQueryError(
+        'session-query: coldOpenHeapShare must be a number between 0 and 1',
+        'SESSION_QUERY_INVALID_CONFIG',
+      )
+    }
+    const coldOpenHeapMultiplier = config.coldOpenHeapMultiplier
+      ?? SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_MULTIPLIER
+    if (!Number.isFinite(coldOpenHeapMultiplier) || coldOpenHeapMultiplier < 1) {
+      throw new SessionQueryError(
+        'session-query: coldOpenHeapMultiplier must be a number greater than or equal to 1',
+        'SESSION_QUERY_INVALID_CONFIG',
+      )
+    }
     this._corpus = new SessionCorpus(ctx, persistedReadConcurrency)
-    this._observations = new SessionObservationReader(ctx, preparedSessionCacheSize)
+    this._observations = new SessionObservationReader(ctx, preparedSessionCacheSize, {
+      cacheBytes: preparedSessionCacheBytes,
+      coldOpenHeapShare,
+      coldOpenHeapMultiplier,
+    })
   }
 
   /**
@@ -136,6 +169,7 @@ export abstract class SessionQueryEngine extends Service {
    * @param sessionId - logical Session identity.
    * @param options - cancellation and projection selection for this read.
    * @returns a caller-owned observation lease.
+   * @throws {@link SessionQueryError} `SESSION_QUERY_SESSION_TOO_LARGE` when a cold open exceeds its heap share.
    */
   observeSession(
     sessionId: SessionId,

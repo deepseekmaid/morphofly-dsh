@@ -59,10 +59,13 @@ The inherited knobs are set through the mounted backend's config:
 | `readWindowMax` | `50` | Maximum `before`/`after` raw events accepted by `readEvent` |
 | `persistedReadConcurrency` | `4` | Concurrent persisted-log reads in one batch title read |
 | `preparedSessionCacheSize` | `5` | Cold prepared-Session observations retained for reuse across `observeSession` reads |
+| `preparedSessionCacheBytes` | `128 MiB` | Estimated heap retained by cached cold observations; least-recently-used entries are evicted until the retained estimate fits, and a pinned entry counts but is never evicted (`0` disables the byte bound) |
+| `coldOpenHeapShare` | `0.5` | Share of free V8 heap a single cold open may estimate; a larger estimate is refused with `SESSION_QUERY_SESSION_TOO_LARGE` (`0` disables the guard) |
+| `coldOpenHeapMultiplier` | `8` | Estimated heap bytes per stored artifact byte; only a backend reporting `sizeBytes` can be priced |
 
 ### Failures and recovery
 
-Failures are typed with a stable `SessionQueryError.code`. The ones you will meet: `SESSION_QUERY_SESSION_NOT_FOUND` when an id is absent; `SESSION_QUERY_SOURCE_CONFLICT` when live and persisted observations of one session disagree on immutable headers; `SESSION_QUERY_PERSISTENCE_FAILED` when mounted persistence is unreadable; `SESSION_QUERY_CORRUPT_SESSION` when a durable record fails Session validation or a live or prepared observation fails projection computation; and `SESSION_QUERY_INVALID_SURFACE` when a loaded log breaks the surface contract. Projection failures retain the original error as `cause`. Reads targeting a known live session never consult persistence, so a failing backend cannot make current in-memory history unreadable.
+Failures are typed with a stable `SessionQueryError.code`. The ones you will meet: `SESSION_QUERY_SESSION_NOT_FOUND` when an id is absent; `SESSION_QUERY_SOURCE_CONFLICT` when live and persisted observations of one session disagree on immutable headers; `SESSION_QUERY_PERSISTENCE_FAILED` when mounted persistence is unreadable; `SESSION_QUERY_CORRUPT_SESSION` when a durable record fails Session validation or a live or prepared observation fails projection computation; and `SESSION_QUERY_INVALID_SURFACE` when a loaded log breaks the surface contract. `SESSION_QUERY_SESSION_TOO_LARGE` refuses a cold open whose estimate would claim more than its configured share of free heap; the refusal happens before the stored log is opened, so nothing is materialized. Projection failures retain the original error as `cause`. Reads targeting a known live session never consult persistence, so a failing backend cannot make current in-memory history unreadable.
 
 -----
 
@@ -107,7 +110,7 @@ The decision history lives in the [unified service decision](../../../.agents/no
 
 ### Observation cache
 
-`observeSession` builds point observations without a listing preflight. A live observation fixes its cut as the current log length and materializes `events` on first read, so header-, cursor-, or projection-only consumers never copy the log; the log only appends, so a late first read still yields exactly that prefix. The cold path stats the stored session first and consults its own bounded cache keyed by the persistence instance and the `stat` revision: an unchanged revision reuses the restored unpublished Session without re-reading the log; a changed revision, or a replaced persistence instance, reloads through the handle seam and replaces the entry. The cache holds `preparedSessionCacheSize` entries with least-recently-used eviction, entries pinned by active observation leases are never evicted, and a session that goes live mid-read retries the live path.
+`observeSession` builds point observations without a listing preflight. A live observation fixes its cut as the current log length and materializes `events` on first read, so header-, cursor-, or projection-only consumers never copy the log; the log only appends, so a late first read still yields exactly that prefix. The cold path stats the stored session first and consults its own bounded cache keyed by the persistence instance and the `stat` revision: an unchanged revision reuses the restored unpublished Session without re-reading the log; a changed revision, or a replaced persistence instance, reloads through the handle seam and replaces the entry. The cache holds `preparedSessionCacheSize` entries with least-recently-used eviction, is additionally bounded by `preparedSessionCacheBytes` of estimated heap, entries pinned by active observation leases are never evicted, and a session that goes live mid-read retries the live path. Before a cache miss loads a stored log, the reader prices it from `stat().sizeBytes` and refuses a cold open whose estimate would exceed `coldOpenHeapShare` of the free V8 heap, reporting the stored size, the estimate, and the free heap in the message.
 
 ### Reads and traces
 
@@ -149,6 +152,7 @@ These limits define when this package is a poor fit or needs special operational
 - **No caller authorization** — this is trusted context-wide infrastructure; a model tool or UI must constrain which sessions its caller may inspect.
 - **No provider coordinator or fallback** — the service is abstract over search, so a composition must mount a concrete backend; there is no search-provider registry or fallback implementation.
 - **Exact reads replay whole logs** — `readSession`, `readSurface`, `filterEvents`, and event traces load and validate the complete logical log, so very large histories pay full inspection per call; `listSessions` stays lightweight.
+- **The cold-open guard is an estimate, and only `observeSession` prices** — it prices a stored artifact at `coldOpenHeapMultiplier` against the free heap at read time; a backend that reports no `sizeBytes` cannot be priced, an underestimate still materializes the log, and the exact-read paths below keep replaying whole logs without pricing them, so the guard narrows one failure mode rather than removing it.
 - **Literal text scan, not full-text search** — the `text` filter scans extracted documents with a regular expression and does not rank; ranked search requires the mounted backend.
 
 <a id="dev-note"></a>

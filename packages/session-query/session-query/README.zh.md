@@ -59,10 +59,13 @@ kind: "package-reference"
 | `readWindowMax` | `50` | `readEvent` 接受的 `before`/`after` 原始事件数上限 |
 | `persistedReadConcurrency` | `4` | 一次批量标题读取中的并发持久化日志读取数 |
 | `preparedSessionCacheSize` | `5` | 为跨 `observeSession` 读取复用而保留的冷 prepared-Session 观察数 |
+| `preparedSessionCacheBytes` | `128 MiB` | 缓存中的冷观察可保留的估算堆字节；按最久未用淘汰直到估算总量装下，被租约钉住的条目计入但不淘汰（`0` 关闭字节上限） |
+| `coldOpenHeapShare` | `0.5` | 单次冷打开可估算占用的空闲 V8 堆比例；估算超出即用 `SESSION_QUERY_SESSION_TOO_LARGE` 拒绝（`0` 关闭护栏） |
+| `coldOpenHeapMultiplier` | `8` | 每存储产物字节对应的估算堆字节；只有报告 `sizeBytes` 的后端才能被定价 |
 
 ### 失败与恢复
 
-失败带有稳定的 `SessionQueryError.code` 类型。你会遇到的包括：id 不存在时 `SESSION_QUERY_SESSION_NOT_FOUND`；同一会话的实时与持久化观察在不可变 header 上不一致时 `SESSION_QUERY_SOURCE_CONFLICT`；已挂载持久化不可读时 `SESSION_QUERY_PERSISTENCE_FAILED`；持久化记录未通过 Session 校验，或实时或 prepared 观察的投影计算失败时 `SESSION_QUERY_CORRUPT_SESSION`；加载的日志破坏表层约定时 `SESSION_QUERY_INVALID_SURFACE`。投影失败会将原始错误保留为 `cause`。针对已知实时会话的读取从不查询持久化，因此后端故障不会让当前内存历史变得不可读。
+失败带有稳定的 `SessionQueryError.code` 类型。你会遇到的包括：id 不存在时 `SESSION_QUERY_SESSION_NOT_FOUND`；同一会话的实时与持久化观察在不可变 header 上不一致时 `SESSION_QUERY_SOURCE_CONFLICT`；已挂载持久化不可读时 `SESSION_QUERY_PERSISTENCE_FAILED`；持久化记录未通过 Session 校验，或实时或 prepared 观察的投影计算失败时 `SESSION_QUERY_CORRUPT_SESSION`；加载的日志破坏表层约定时 `SESSION_QUERY_INVALID_SURFACE`；冷打开的估算超过配置的空闲堆份额时 `SESSION_QUERY_SESSION_TOO_LARGE`，该拒绝发生在打开存储日志之前，因此不会物化任何内容。投影失败会将原始错误保留为 `cause`。针对已知实时会话的读取从不查询持久化，因此后端故障不会让当前内存历史变得不可读。
 
 -----
 
@@ -107,7 +110,7 @@ kind: "package-reference"
 
 ### 观察缓存
 
-`observeSession` 不经过列表预检直接构建定点观察。实时观察以当前日志长度固定 cut，并在首次读取时才物化 `events`，因此只需要 header、cursor 或 projection 的消费者永远不会复制日志；日志只会追加，所以延后的首次读取得到的仍然正好是该前缀。冷路径先对存储会话执行 `stat`，再查询自有的有界缓存，缓存键为持久化实例加 `stat` 修订：修订未变则复用已恢复的未发布 Session，不再重读日志；修订变化或持久化实例被替换则经句柄 seam 重新加载并替换条目。缓存保留 `preparedSessionCacheSize` 个条目并按最久未用淘汰，被活跃观察租约钉住的条目从不被淘汰；读取中途转为实时的会话会重试实时路径。
+`observeSession` 不经过列表预检直接构建定点观察。实时观察以当前日志长度固定 cut，并在首次读取时才物化 `events`，因此只需要 header、cursor 或 projection 的消费者永远不会复制日志；日志只会追加，所以延后的首次读取得到的仍然正好是该前缀。冷路径先对存储会话执行 `stat`，再查询自有的有界缓存，缓存键为持久化实例加 `stat` 修订：修订未变则复用已恢复的未发布 Session，不再重读日志；修订变化或持久化实例被替换则经句柄 seam 重新加载并替换条目。缓存保留 `preparedSessionCacheSize` 个条目并按最久未用淘汰，同时受 `preparedSessionCacheBytes` 的估算堆字节上限约束，被活跃观察租约钉住的条目从不被淘汰；读取中途转为实时的会话会重试实时路径。缓存未命中而要加载存储日志之前，读取器先用 `stat().sizeBytes` 为其定价，若估算会超过空闲 V8 堆的 `coldOpenHeapShare` 就拒绝该次冷打开，并在消息中给出存储大小、估算值与空闲堆。
 
 ### 读取与追踪
 
@@ -149,6 +152,7 @@ kind: "package-reference"
 - **无调用方授权**——这是上下文范围内的可信基础设施；模型工具或 UI 必须限制调用方可检查的会话。
 - **无提供方协调器或回退**——服务在搜索上是抽象的，组合必须挂载具体后端；没有搜索提供方注册表或回退实现。
 - **精确读取回放整个日志**——`readSession`、`readSurface`、`filterEvents` 与事件追踪会加载并校验完整逻辑日志，因此非常大的历史每次调用都要付出完整检查；`listSessions` 保持轻量。
+- **冷打开护栏是估算，且只给 `observeSession` 定价**——它按 `coldOpenHeapMultiplier` 把存储产物折算成堆、并对比读取时刻的空闲堆；不报告 `sizeBytes` 的后端无法被定价，估算偏低时仍会物化日志，下面的精确读取路径仍会不加定价地重放整份日志，因此护栏收窄的是其中一种失败模式而不是消除它。
 - **字面文本扫描，而非全文搜索**——`text` 过滤器用正则表达式扫描提取出的文档且不提供排名；带排名的搜索需要挂载后端。
 
 <a id="dev-note"></a>

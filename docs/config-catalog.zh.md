@@ -3184,7 +3184,7 @@ export interface Config {
 
 - `inject`: `sessions`
 - `refs`: [`SessionQueryConfig`](../packages/session-query/session-query/src/index.ts)
-- `source`: [`packages/session-query/session-query-sqlite/src/index.ts:92`](../packages/session-query/session-query-sqlite/src/index.ts)
+- `source`: [`packages/session-query/session-query-sqlite/src/index.ts:95`](../packages/session-query/session-query-sqlite/src/index.ts)
 
 ```ts config-catalog
 /** Combined session-query configuration backed by SQLite full-text search. */
@@ -3215,6 +3215,12 @@ export interface Config extends SessionQueryConfig {
   persistedReadConcurrency?: number
   /** Maximum cold prepared-Session observations the inherited reader retains for reuse. Defaults to 5. */
   preparedSessionCacheSize?: number
+  /** Estimated heap bytes the inherited reader retains for unpinned cold observations. Defaults to 128 MiB. */
+  preparedSessionCacheBytes?: number
+  /** Share of free V8 heap one cold open may estimate before it is refused. Defaults to 0.5. */
+  coldOpenHeapShare?: number
+  /** Estimated heap bytes per stored artifact byte for a cold open. Defaults to 8. */
+  coldOpenHeapMultiplier?: number
 }
 
 /** SQLite module/handle opening phase; `never` disables full-text search entirely. */

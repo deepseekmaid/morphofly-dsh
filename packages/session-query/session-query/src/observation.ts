@@ -1,5 +1,6 @@
 /** Shared live/prepared observations for Session page and lifecycle consumers. */
 
+import { getHeapStatistics } from 'node:v8'
 import type { Context } from '@deepseek-ai/cordis'
 import { SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId , SessionLogOffset as SessionLogOffsetType , SessionSeqCursor } from '@deepseek-ai/dsh-session'
@@ -10,7 +11,13 @@ import type {
 } from '@deepseek-ai/dsh-session-persistence'
 import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-projection-cache'
-import { SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE, SessionQueryError } from './config.ts'
+import {
+  SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_MULTIPLIER,
+  SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_SHARE,
+  SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_BYTES,
+  SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
+  SessionQueryError,
+} from './config.ts'
 import { readColdSessionLog, type ColdSessionLog } from './cold-read.ts'
 
 /** One exact immutable Session cut retained for the caller's read lifetime. */
@@ -40,6 +47,16 @@ export interface SessionObservation extends Disposable {
   retain(): SessionObservation
 }
 
+/** Bounds this reader applies to cold prepared observations. */
+export interface SessionObservationLimits {
+  /** Estimated heap bytes retained by unpinned entries; `0` disables the byte bound. */
+  readonly cacheBytes?: number
+  /** Share of free V8 heap one cold open may estimate; `0` disables the guard. */
+  readonly coldOpenHeapShare?: number
+  /** Estimated heap bytes per stored artifact byte. */
+  readonly coldOpenHeapMultiplier?: number
+}
+
 /** Projection work and cancellation requested for one exact observation. */
 export interface SessionObservationOptions {
   /** Optional cancellation while resolving a cold source. */
@@ -62,6 +79,8 @@ interface PreparedEntry {
   readonly session: Session
   /** Immutable balanced log (stored events plus in-memory interrupted-turn closers). */
   readonly events: readonly SessionEvent[]
+  /** Estimated heap bytes this entry retains, from the stored artifact size. */
+  readonly bytes: number
   /** Active observation leases; a pinned entry (`refs > 0`) is never evicted. */
   refs: number
 }
@@ -72,27 +91,42 @@ interface PreparedEntry {
  * Cold reads are cached per session id, keyed by the persistence instance and
  * the `stat` revision observed before the log read: an unchanged revision
  * reuses the restored Session without re-reading the log. The cache is bounded
- * (least-recently-used unpinned entries are evicted past the capacity), and
+ * by `cacheCapacity` entries and by `cacheBytes` of estimated heap
+ * (least-recently-used unpinned entries are evicted past either bound), and
  * entries pinned by active leases survive eviction and replacement — a lease's
  * cut stays valid for the lease lifetime even after a newer revision lands.
+ * A cache miss prices the stored artifact through `coldOpenHeapShare` of the
+ * free V8 heap before reading it, and refuses an oversized open.
  */
 export class SessionObservationReader {
   private readonly cache = new Map<SessionId, PreparedEntry>()
+  private readonly cacheBytes: number
+  private readonly coldOpenHeapShare: number
+  private readonly coldOpenHeapMultiplier: number
+  /** Running estimate of the heap bytes the cache retains. */
+  private retainedBytes = 0
 
   /**
    * @param ctx - context carrying Session and optional persistence/projection services.
    * @param cacheCapacity - maximum unpinned cold observations retained for reuse.
+   * @param limits - byte budget and cold-open guard policy; defaults come from `config.ts`.
    */
   constructor(
     private readonly ctx: Context,
     private readonly cacheCapacity: number = SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
-  ) {}
+    limits: SessionObservationLimits = {},
+  ) {
+    this.cacheBytes = limits.cacheBytes ?? SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_BYTES
+    this.coldOpenHeapShare = limits.coldOpenHeapShare ?? SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_SHARE
+    this.coldOpenHeapMultiplier = limits.coldOpenHeapMultiplier ?? SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_MULTIPLIER
+  }
 
   /**
    * Observe one live-preferred Session and retain a cold preparation until disposal.
    * @param sessionId - logical Session identity.
    * @param options - cancellation and all-or-none projection computation for this read.
    * @returns one exact immutable observation.
+   * @throws {@link SessionQueryError} `SESSION_QUERY_SESSION_TOO_LARGE` when a cold open exceeds its heap share.
    * @throws {@link SessionQueryError} with code `SESSION_QUERY_CORRUPT_SESSION` when live or prepared projection computation fails.
    */
   async read(
@@ -112,6 +146,7 @@ export class SessionObservationReader {
       if (attachedDuringStat !== undefined) return this.live(attachedDuringStat, projectionMode)
       let entry = this.cachedEntry(persistence.identity, sessionId, snapshot.revision)
       if (entry === undefined) {
+        this.assertColdOpenAffordable(sessionId, snapshot)
         const loaded = await this.loadSource(persistence, sessionId, signal)
         throwIfObservationAborted(signal)
         const attached = this.ctx.sessions.get(sessionId)
@@ -143,6 +178,7 @@ export class SessionObservationReader {
           revision: snapshot.revision,
           session,
           events: Object.freeze(seed),
+          bytes: this.estimateBytes(snapshot),
           refs: 0,
         }
         this.store(sessionId, entry)
@@ -215,28 +251,65 @@ export class SessionObservationReader {
     return cached
   }
 
-  /** Insert or replace the entry for one id, then evict past the capacity. */
+  /** Insert or replace the entry for one id, then evict past the entry and byte bounds. */
   private store(sessionId: SessionId, entry: PreparedEntry): void {
     // Replacing a stale revision only drops the map's reference; live leases
     // keep the old entry alive through their own references.
+    const replaced = this.cache.get(sessionId)
+    if (replaced !== undefined) this.retainedBytes -= replaced.bytes
     this.cache.delete(sessionId)
     this.cache.set(sessionId, entry)
+    this.retainedBytes += entry.bytes
     this.evictPastCapacity(entry)
   }
 
   /**
-   * Evict oldest unpinned entries until the cache fits its capacity again.
-   * Runs on store and whenever a lease release unpins an entry, so leases
-   * that pinned every candidate cannot leave the cache over budget for good.
+   * Evict oldest unpinned entries until the cache fits its entry and byte
+   * bounds again. Runs on store and whenever a lease release unpins an entry,
+   * so leases that pinned every candidate cannot leave the cache over budget
+   * for good.
    * @param keep - the entry being stored, about to be leased; never evicted.
    */
   private evictPastCapacity(keep?: PreparedEntry): void {
-    if (this.cache.size <= this.cacheCapacity) return
     for (const [id, candidate] of this.cache) {
+      if (this.withinBounds()) return
       if (candidate === keep || candidate.refs > 0) continue
       this.cache.delete(id)
-      if (this.cache.size <= this.cacheCapacity) return
+      this.retainedBytes -= candidate.bytes
     }
+  }
+
+  /** Whether the retained cache fits both the entry count and the byte budget. */
+  private withinBounds(): boolean {
+    return this.cache.size <= this.cacheCapacity
+      && (this.cacheBytes === 0 || this.retainedBytes <= this.cacheBytes)
+  }
+
+  /**
+   * Refuse a cold open whose estimated heap cost exceeds its share of free V8
+   * heap. The estimate prices the stored artifact at the configured multiple; a
+   * backend that reports no `sizeBytes` cannot be priced and passes.
+   * @param sessionId - the stored session about to be loaded.
+   * @param snapshot - the stat result that priced it.
+   * @throws {SessionQueryError} `SESSION_QUERY_SESSION_TOO_LARGE` when the estimate does not fit.
+   */
+  private assertColdOpenAffordable(sessionId: SessionId, snapshot: SessionPersistenceSnapshot): void {
+    if (this.coldOpenHeapShare === 0 || snapshot.sizeBytes === undefined) return
+    const estimated = this.estimateBytes(snapshot)
+    const free = freeHeapBytes()
+    const budget = Math.floor(free * this.coldOpenHeapShare)
+    if (estimated <= budget) return
+    throw new SessionQueryError(
+      `session "${sessionId}" is too large to open: about ${formatBytes(estimated)} of heap for ${formatBytes(snapshot.sizeBytes)} stored, but only ${formatBytes(free)} of heap is free; close other Sessions or restart the host with a larger heap`,
+      'SESSION_QUERY_SESSION_TOO_LARGE',
+    )
+  }
+
+  /** Estimate the heap one cold observation of a stored artifact retains. */
+  private estimateBytes(snapshot: SessionPersistenceSnapshot): number {
+    return snapshot.sizeBytes === undefined
+      ? 0
+      : Math.ceil(snapshot.sizeBytes * this.coldOpenHeapMultiplier)
   }
 
   /** Build one disposable lease over a cached entry, pinning it until every lease releases. */
@@ -323,6 +396,23 @@ export class SessionObservationReader {
       ? registry.hydrate(entry.session, {}, entry.events, SessionLogOffset(0))
       : cache.hydratePrepared(entry.session, entry.events)
   }
+}
+
+/** Free V8 heap one cold open may estimate against, in bytes. */
+function freeHeapBytes(): number {
+  return Math.max(0, getHeapStatistics().heap_size_limit - process.memoryUsage().heapUsed)
+}
+
+/** Render a byte count for an operator-facing refusal message. */
+function formatBytes(bytes: number): string {
+  const units = ['B', 'KiB', 'MiB', 'GiB'] as const
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit] as string}`
 }
 
 function throwIfObservationAborted(signal: AbortSignal | undefined): void {

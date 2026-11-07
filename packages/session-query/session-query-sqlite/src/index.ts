@@ -16,7 +16,10 @@ import type {
   SessionPersistenceSnapshot,
 } from '@deepseek-ai/dsh-session-persistence'
 import SessionQueryEngine, {
+  SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_MULTIPLIER,
+  SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_SHARE,
   SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
+  SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_BYTES,
   SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
   SESSION_QUERY_READ_WINDOW_MAX,
   SessionQueryError,
@@ -116,6 +119,12 @@ export interface Config extends SessionQueryConfig {
   persistedReadConcurrency?: number
   /** Maximum cold prepared-Session observations the inherited reader retains for reuse. Defaults to 5. */
   preparedSessionCacheSize?: number
+  /** Estimated heap bytes the inherited reader retains for unpinned cold observations. Defaults to 128 MiB. */
+  preparedSessionCacheBytes?: number
+  /** Share of free V8 heap one cold open may estimate before it is refused. Defaults to 0.5. */
+  coldOpenHeapShare?: number
+  /** Estimated heap bytes per stored artifact byte for a cold open. Defaults to 8. */
+  coldOpenHeapMultiplier?: number
 }
 
 interface ResolvedConfig {
@@ -128,6 +137,9 @@ interface ResolvedConfig {
   readWindowMax: number
   persistedReadConcurrency: number
   preparedSessionCacheSize: number
+  preparedSessionCacheBytes: number
+  coldOpenHeapShare: number
+  coldOpenHeapMultiplier: number
 }
 
 interface ObservedSession {
@@ -221,6 +233,13 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
       .min(1)
       .max(Number.MAX_SAFE_INTEGER)
       .default(SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE),
+    preparedSessionCacheBytes: z.number()
+      .step(1)
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER)
+      .default(SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_BYTES),
+    coldOpenHeapShare: z.number().min(0).max(1).default(SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_SHARE),
+    coldOpenHeapMultiplier: z.number().min(1).default(SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_MULTIPLIER),
   })
 
   /** Validated and defaulted backend configuration. */
@@ -1030,6 +1049,11 @@ function resolveConfig(config: Config): ResolvedConfig {
       ?? SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
     preparedSessionCacheSize: config.preparedSessionCacheSize
       ?? SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE,
+    preparedSessionCacheBytes: config.preparedSessionCacheBytes
+      ?? SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_BYTES,
+    coldOpenHeapShare: config.coldOpenHeapShare ?? SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_SHARE,
+    coldOpenHeapMultiplier: config.coldOpenHeapMultiplier
+      ?? SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_MULTIPLIER,
   }
   if (typeof resolved.path !== 'string' || resolved.path.trim().length === 0) {
     throw invalidConfig('path must not be blank')
@@ -1053,6 +1077,22 @@ function resolveConfig(config: Config): ResolvedConfig {
     || resolved.preparedSessionCacheSize < 1
   ) {
     throw invalidConfig('preparedSessionCacheSize must be a positive safe integer')
+  }
+  if (
+    !Number.isSafeInteger(resolved.preparedSessionCacheBytes)
+    || resolved.preparedSessionCacheBytes < 0
+  ) {
+    throw invalidConfig('preparedSessionCacheBytes must be a non-negative safe integer')
+  }
+  if (
+    !Number.isFinite(resolved.coldOpenHeapShare)
+    || resolved.coldOpenHeapShare < 0
+    || resolved.coldOpenHeapShare > 1
+  ) {
+    throw invalidConfig('coldOpenHeapShare must be a number between 0 and 1')
+  }
+  if (!Number.isFinite(resolved.coldOpenHeapMultiplier) || resolved.coldOpenHeapMultiplier < 1) {
+    throw invalidConfig('coldOpenHeapMultiplier must be a number greater than or equal to 1')
   }
   if (resolved.defaultLimit > resolved.maxLimit) {
     throw invalidConfig('defaultLimit must be less than or equal to maxLimit')
