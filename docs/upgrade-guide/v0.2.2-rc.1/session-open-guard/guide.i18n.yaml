@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.2-rc.1/session-open-guard/guide.md
+/:
+  en: f89e2a1ec9b4ef1f
+  zh: cf353663cb5018d4
+/cold-opens-are-refused-when-a-session-no-longer-fits-the-free-heap:
+  en: 5ef070c35035f65a
+  zh: baeed3e4597d2807
+/cold-opens-are-refused-when-a-session-no-longer-fits-the-free-heap/change:
+  en: 7607ba4b86e55cac
+  zh: 61e45e67c8ccd1ed
+/cold-opens-are-refused-when-a-session-no-longer-fits-the-free-heap/migration:
+  en: 25c75fab062248fd
+  zh: e6f1f27aef487896

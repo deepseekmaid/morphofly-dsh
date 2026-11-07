@@ -11,6 +11,21 @@ export const SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY = 4
 /** Default maximum number of cold prepared-Session observations retained for reuse. */
 export const SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE = 5
 
+/** Default estimated heap budget for unpinned cold prepared-Session observations. */
+export const SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_BYTES = 128 * 1024 * 1024
+
+/** Default share of free V8 heap one cold open may estimate before it is refused. */
+export const SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_SHARE = 0.5
+
+/**
+ * Default estimated heap bytes per stored artifact byte for a cold open.
+ *
+ * A restored Session keeps one event object per stored event, so its heap cost
+ * exceeds the stored artifact. The value is a conservative multiple measured on
+ * the JSONL backend; operators with other backends tune it.
+ */
+export const SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_MULTIPLIER = 8
+
 /** Backend-independent configuration inherited by every session-query implementation. */
 export interface Config {
   /** Maximum accepted raw read context on either side. Defaults to 50. */
@@ -23,6 +38,23 @@ export interface Config {
    * against this bound until released. Defaults to 5.
    */
   preparedSessionCacheSize?: number
+  /**
+   * Estimated heap bytes retained by unpinned cold observations; entries are
+   * evicted least-recently-used until the retained estimate fits. `0` disables
+   * the byte bound. Defaults to 128 MiB.
+   */
+  preparedSessionCacheBytes?: number
+  /**
+   * Share of free V8 heap a single cold observation may estimate before the read
+   * is refused with `SESSION_QUERY_SESSION_TOO_LARGE`. `0` disables the guard.
+   * Defaults to 0.5.
+   */
+  coldOpenHeapShare?: number
+  /**
+   * Estimated heap bytes per stored artifact byte, applied only when the backend
+   * reports `sizeBytes`; it also prices retained cache entries. Defaults to 8.
+   */
+  coldOpenHeapMultiplier?: number
 }
 
 /** Stable machine-routable failure taxonomy for session reads, traces, and search. */
@@ -42,6 +74,7 @@ export type SessionQueryErrorCode =
   | 'SESSION_QUERY_PERSISTENCE_FAILED'
   | 'SESSION_QUERY_SEARCH_DISABLED'
   | 'SESSION_QUERY_SESSION_NOT_FOUND'
+  | 'SESSION_QUERY_SESSION_TOO_LARGE'
   | 'SESSION_QUERY_STALE_CURSOR'
   | 'SESSION_QUERY_SOURCE_CONFLICT'
 

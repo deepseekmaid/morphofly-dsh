@@ -24,11 +24,11 @@
   en: 1b95403461947ca1
   zh: cffa21b03df9f0ad
 /deepseek-ai-dsh-session-query/use-this-package/configuration:
-  en: bec9cedaa219e297
-  zh: e9cd16c0589fab4d
+  en: 3b5782455dfc0e41
+  zh: 1ccdeeb24adbc0e3
 /deepseek-ai-dsh-session-query/use-this-package/failures-and-recovery:
-  en: fe410eb1234c1c45
-  zh: d2a1be75eb841be0
+  en: bed28838872e3431
+  zh: 0388664906f669d5
 /deepseek-ai-dsh-session-query/understand-the-implementation:
   en: 6a18034f1ccc247a
   zh: aecd49a7b846f913
@@ -42,8 +42,8 @@
   en: efa560c55a869c71
   zh: 451eb107825856ac
 /deepseek-ai-dsh-session-query/understand-the-implementation/observation-cache:
-  en: abe122deb81566e5
-  zh: 4c4f327f2ee1144e
+  en: c3c18aadff15e517
+  zh: b06e9e58c8f28585
 /deepseek-ai-dsh-session-query/understand-the-implementation/reads-and-traces:
   en: 48922e284adddd1b
   zh: 9956dcc57e027d77
@@ -57,8 +57,8 @@
   en: ca75c51c89c2c9b0
   zh: f57cc48a1b5cbfa9
 /deepseek-ai-dsh-session-query/known-limitations-and-deferred-work:
-  en: e70a64614189c09c
-  zh: 88d2a6634385c501
+  en: 3bad7dbc526b0d5d
+  zh: 015181078dfb1396
 /deepseek-ai-dsh-session-query/known-limitations-and-deferred-work/dev-note:
   en: d2f0d68fe29fb750
   zh: 323d21ee73a9e3f6
