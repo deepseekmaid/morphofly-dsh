@@ -91,9 +91,12 @@ interface PreparedEntry {
  * Cold reads are cached per session id, keyed by the persistence instance and
  * the `stat` revision observed before the log read: an unchanged revision
  * reuses the restored Session without re-reading the log. The cache is bounded
- * (least-recently-used unpinned entries are evicted past the capacity), and
+ * by `cacheCapacity` entries and by `cacheBytes` of estimated heap
+ * (least-recently-used unpinned entries are evicted past either bound), and
  * entries pinned by active leases survive eviction and replacement — a lease's
  * cut stays valid for the lease lifetime even after a newer revision lands.
+ * A cache miss prices the stored artifact through `coldOpenHeapShare` of the
+ * free V8 heap before reading it, and refuses an oversized open.
  */
 export class SessionObservationReader {
   private readonly cache = new Map<SessionId, PreparedEntry>()
@@ -123,6 +126,7 @@ export class SessionObservationReader {
    * @param sessionId - logical Session identity.
    * @param options - cancellation and all-or-none projection computation for this read.
    * @returns one exact immutable observation.
+   * @throws {@link SessionQueryError} `SESSION_QUERY_SESSION_TOO_LARGE` when a cold open exceeds its heap share.
    * @throws {@link SessionQueryError} with code `SESSION_QUERY_CORRUPT_SESSION` when live or prepared projection computation fails.
    */
   async read(

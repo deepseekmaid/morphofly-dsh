@@ -59,7 +59,7 @@ kind: "package-reference"
 | `readWindowMax` | `50` | `readEvent` 接受的 `before`/`after` 原始事件数上限 |
 | `persistedReadConcurrency` | `4` | 一次批量标题读取中的并发持久化日志读取数 |
 | `preparedSessionCacheSize` | `5` | 为跨 `observeSession` 读取复用而保留的冷 prepared-Session 观察数 |
-| `preparedSessionCacheBytes` | `128 MiB` | 未被租约钉住的冷观察可保留的估算堆字节；按最久未用淘汰直到估算总量装下（`0` 关闭字节上限） |
+| `preparedSessionCacheBytes` | `128 MiB` | 缓存中的冷观察可保留的估算堆字节；按最久未用淘汰直到估算总量装下，被租约钉住的条目计入但不淘汰（`0` 关闭字节上限） |
 | `coldOpenHeapShare` | `0.5` | 单次冷打开可估算占用的空闲 V8 堆比例；估算超出即用 `SESSION_QUERY_SESSION_TOO_LARGE` 拒绝（`0` 关闭护栏） |
 | `coldOpenHeapMultiplier` | `8` | 每存储产物字节对应的估算堆字节；只有报告 `sizeBytes` 的后端才能被定价 |
 
@@ -152,7 +152,7 @@ kind: "package-reference"
 - **无调用方授权**——这是上下文范围内的可信基础设施；模型工具或 UI 必须限制调用方可检查的会话。
 - **无提供方协调器或回退**——服务在搜索上是抽象的，组合必须挂载具体后端；没有搜索提供方注册表或回退实现。
 - **精确读取回放整个日志**——`readSession`、`readSurface`、`filterEvents` 与事件追踪会加载并校验完整逻辑日志，因此非常大的历史每次调用都要付出完整检查；`listSessions` 保持轻量。
-- **冷打开护栏是估算**——它按 `coldOpenHeapMultiplier` 把存储产物折算成堆、并对比读取时刻的空闲堆；不报告 `sizeBytes` 的后端无法被定价，估算偏低时仍会物化日志，因此护栏收窄的是失败模式而不是消除它。
+- **冷打开护栏是估算，且只给 `observeSession` 定价**——它按 `coldOpenHeapMultiplier` 把存储产物折算成堆、并对比读取时刻的空闲堆；不报告 `sizeBytes` 的后端无法被定价，估算偏低时仍会物化日志，下面的精确读取路径仍会不加定价地重放整份日志，因此护栏收窄的是其中一种失败模式而不是消除它。
 - **字面文本扫描，而非全文搜索**——`text` 过滤器用正则表达式扫描提取出的文档且不提供排名；带排名的搜索需要挂载后端。
 
 <a id="dev-note"></a>

@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.2-rc.1/session-open-guard/guide.md
 /:
-  en: f89e2a1ec9b4ef1f
-  zh: cf353663cb5018d4
-/cold-opens-are-refused-when-a-session-no-longer-fits-the-free-heap:
-  en: 5ef070c35035f65a
-  zh: baeed3e4597d2807
-/cold-opens-are-refused-when-a-session-no-longer-fits-the-free-heap/change:
+  en: ecf6a612eb18dabd
+  zh: cf0c5097f68bd7cb
+/observesession-refuses-a-cold-open-that-no-longer-fits-the-free-heap:
+  en: 0dce4b6ae05e8b2f
+  zh: b68b9b2023f159a3
+/observesession-refuses-a-cold-open-that-no-longer-fits-the-free-heap/change:
   en: 7607ba4b86e55cac
   zh: 61e45e67c8ccd1ed
-/cold-opens-are-refused-when-a-session-no-longer-fits-the-free-heap/migration:
-  en: 25c75fab062248fd
-  zh: e6f1f27aef487896
+/observesession-refuses-a-cold-open-that-no-longer-fits-the-free-heap/migration:
+  en: b7392790ad4d4fb2
+  zh: 7d367eaa9fcec484

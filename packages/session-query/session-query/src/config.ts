@@ -11,7 +11,7 @@ export const SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY = 4
 /** Default maximum number of cold prepared-Session observations retained for reuse. */
 export const SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_SIZE = 5
 
-/** Default estimated heap budget for unpinned cold prepared-Session observations. */
+/** Default estimated heap retained by cached cold prepared-Session observations. */
 export const SESSION_QUERY_DEFAULT_PREPARED_SESSION_CACHE_BYTES = 128 * 1024 * 1024
 
 /** Default share of free V8 heap one cold open may estimate before it is refused. */
@@ -21,8 +21,9 @@ export const SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_SHARE = 0.5
  * Default estimated heap bytes per stored artifact byte for a cold open.
  *
  * A restored Session keeps one event object per stored event, so its heap cost
- * exceeds the stored artifact. The value is a conservative multiple measured on
- * the JSONL backend; operators with other backends tune it.
+ * exceeds the stored artifact. The default is a conservative multiple for the
+ * JSONL backend; measure the backend in use and raise it when its artifacts
+ * decompress or decode into more heap than this multiple prices.
  */
 export const SESSION_QUERY_DEFAULT_COLD_OPEN_HEAP_MULTIPLIER = 8
 
@@ -39,9 +40,10 @@ export interface Config {
    */
   preparedSessionCacheSize?: number
   /**
-   * Estimated heap bytes retained by unpinned cold observations; entries are
-   * evicted least-recently-used until the retained estimate fits. `0` disables
-   * the byte bound. Defaults to 128 MiB.
+   * Estimated heap bytes retained by cached cold observations; entries are
+   * evicted least-recently-used until the retained estimate fits. A pinned
+   * entry counts against the estimate but is never evicted. `0` disables the
+   * byte bound. Defaults to 128 MiB.
    */
   preparedSessionCacheBytes?: number
   /**

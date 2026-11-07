@@ -74,7 +74,6 @@ export {
   SESSION_QUERY_READ_WINDOW_MAX,
   SessionQueryError,
 } from './config.ts'
-export type { SessionObservationLimits } from './observation.ts'
 export { readColdSessionLog } from './cold-read.ts'
 export type { ColdSessionLog } from './cold-read.ts'
 export { extractSessionEventText } from './extraction.ts'
@@ -170,6 +169,7 @@ export abstract class SessionQueryEngine extends Service {
    * @param sessionId - logical Session identity.
    * @param options - cancellation and projection selection for this read.
    * @returns a caller-owned observation lease.
+   * @throws {@link SessionQueryError} `SESSION_QUERY_SESSION_TOO_LARGE` when a cold open exceeds its heap share.
    */
   observeSession(
     sessionId: SessionId,

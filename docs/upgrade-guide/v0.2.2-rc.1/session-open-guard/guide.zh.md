@@ -1,9 +1,9 @@
 ---
 kind: upgrade-guide
-description: "存储日志不再装得下空闲堆时，冷打开会话会被拒绝。"
+description: "存储日志不再装得下空闲堆时，observeSession 的冷打开会被拒绝。"
 ---
 
-# 会话不再装得下空闲堆时，冷打开会被拒绝
+# 存储日志不再装得下空闲堆时，observeSession 拒绝冷打开
 
 [English](guide.md) | 中文
 
@@ -15,14 +15,12 @@ prepared-Session 缓存在条目上限之外增加字节上限：`preparedSessio
 
 ## 迁移
 
-无需迁移。会话装得下堆的宿主行为不变；过去能打开超大会话随后陷入换页的宿主，现在会得到可读的失败。后端组合设置三个继承的旋钮：
+无需迁移。会话装得下堆的宿主行为不变；过去能打开超大会话随后陷入换页的宿主，现在会得到可读的失败。后端 `Config` 接受三个继承的旋钮，默认值如下：
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `coldOpenHeapShare` | `0.5` | 单次冷打开可估算占用的空闲 V8 堆比例；`0` 关闭护栏 |
 | `coldOpenHeapMultiplier` | `8` | 每存储产物字节对应的估算堆字节 |
-| `preparedSessionCacheBytes` | `128 MiB` | 未被租约钉住的冷观察保留的估算堆；`0` 关闭字节上限 |
+| `preparedSessionCacheBytes` | `128 MiB` | 缓存中的冷观察保留的估算堆；被租约钉住的条目计入但不淘汰；`0` 关闭字节上限 |
 
-`SessionObservationReader` 保留 `(ctx, cacheCapacity?)` 构造形式，并为直接构造读取器的调用方新增可选的第三个 limits 参数。
-
-护栏是估算而非实测。不报告 `sizeBytes` 的后端无法定价，会被放行；估算低于真实成本时仍会物化日志。要打开超过堆上限的会话，提高宿主堆仍是唯一办法。
+护栏是估算而非实测。不报告 `sizeBytes` 的后端无法定价，会被放行；估算低于真实成本时仍会物化日志。把 `coldOpenHeapShare` 设为 `0` 可关闭护栏；要真正加载估算超出份额的会话，提高宿主堆仍是唯一办法。

@@ -59,7 +59,7 @@ The inherited knobs are set through the mounted backend's config:
 | `readWindowMax` | `50` | Maximum `before`/`after` raw events accepted by `readEvent` |
 | `persistedReadConcurrency` | `4` | Concurrent persisted-log reads in one batch title read |
 | `preparedSessionCacheSize` | `5` | Cold prepared-Session observations retained for reuse across `observeSession` reads |
-| `preparedSessionCacheBytes` | `128 MiB` | Estimated heap retained by unpinned cold observations; least-recently-used entries are evicted until the retained estimate fits (`0` disables the byte bound) |
+| `preparedSessionCacheBytes` | `128 MiB` | Estimated heap retained by cached cold observations; least-recently-used entries are evicted until the retained estimate fits, and a pinned entry counts but is never evicted (`0` disables the byte bound) |
 | `coldOpenHeapShare` | `0.5` | Share of free V8 heap a single cold open may estimate; a larger estimate is refused with `SESSION_QUERY_SESSION_TOO_LARGE` (`0` disables the guard) |
 | `coldOpenHeapMultiplier` | `8` | Estimated heap bytes per stored artifact byte; only a backend reporting `sizeBytes` can be priced |
 
@@ -152,7 +152,7 @@ These limits define when this package is a poor fit or needs special operational
 - **No caller authorization** — this is trusted context-wide infrastructure; a model tool or UI must constrain which sessions its caller may inspect.
 - **No provider coordinator or fallback** — the service is abstract over search, so a composition must mount a concrete backend; there is no search-provider registry or fallback implementation.
 - **Exact reads replay whole logs** — `readSession`, `readSurface`, `filterEvents`, and event traces load and validate the complete logical log, so very large histories pay full inspection per call; `listSessions` stays lightweight.
-- **The cold-open guard is an estimate** — it prices a stored artifact at `coldOpenHeapMultiplier` against the free heap at read time; a backend that reports no `sizeBytes` cannot be priced, and an underestimate still materializes the log, so the guard narrows the failure mode rather than removing it.
+- **The cold-open guard is an estimate, and only `observeSession` prices** — it prices a stored artifact at `coldOpenHeapMultiplier` against the free heap at read time; a backend that reports no `sizeBytes` cannot be priced, an underestimate still materializes the log, and the exact-read paths below keep replaying whole logs without pricing them, so the guard narrows one failure mode rather than removing it.
 - **Literal text scan, not full-text search** — the `text` filter scans extracted documents with a regular expression and does not rank; ranked search requires the mounted backend.
 
 <a id="dev-note"></a>
