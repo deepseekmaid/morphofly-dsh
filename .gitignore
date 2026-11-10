@@ -56,6 +56,9 @@ native/system/test/bin/
 # devflow 运行产物
 runs/
 
+# Local CodeGraph index (per-machine database, hundreds of MiB)
+.codegraph/
+
 # Local tool scratch (pinned pnpm download, temporary tsconfigs)
 /.tmp-pnpm/
 /.tmp-tsconfig*.json
