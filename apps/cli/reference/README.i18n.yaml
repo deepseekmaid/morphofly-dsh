@@ -24,8 +24,11 @@
   en: 149c5571acd51baf
   zh: 300e3c2425273a92
 /dsh-cli-behavior-reference/shared-deployment-behavior:
-  en: f02219118dcec531
-  zh: fe2977628d7340da
+  en: ee2850907efad127
+  zh: 3544a0a34ac7df23
+/dsh-cli-behavior-reference/shared-deployment-behavior/launch-memory-tuning:
+  en: 3c49ee75aebd0758
+  zh: 5e103a33d6ca846f
 /dsh-cli-behavior-reference/source-execution:
   en: 0fd6c72ba9a7eb3b
   zh: 011c0ac4008ee480
