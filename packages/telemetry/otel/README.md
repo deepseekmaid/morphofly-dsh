@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Mount one `otel` service to create ordinary-event and Session-log reporting channels. Each channel has its own exporter, resource, instrumentation scope, and queue. Mounting alone creates no transport or identity and sends nothing. Business consumers own authorization, redaction, field selection, and their channel's disposal.
+Mount one `otel` service to create ordinary-event and Session-log reporting channels. Each channel has its own exporter, resource, instrumentation scope, and queue. Mounting alone creates no transport or identity, loads no SDK pipeline, and sends nothing; the OTLP pipeline loads on the first record or event. Business consumers own authorization, redaction, field selection, and their channel's disposal.
 
 ## Table of Contents
 

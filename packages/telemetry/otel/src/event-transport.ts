@@ -1,10 +1,8 @@
 /** Cancellable ordinary-event HTTP exports, including retry waits and response reads. */
 import type { Agent as HttpsAgent } from 'node:https'
 import { gzipSync } from 'node:zlib'
-import got from 'got'
-import { createOtlpNetworkExportDelegate, OTLPExporterBase } from '@opentelemetry/otlp-exporter-base'
-import { JsonLogsSerializer } from '@opentelemetry/otlp-transformer'
 import type { LogRecordExporter } from '@opentelemetry/sdk-logs'
+import { exporterBase, got, otlpTransformer } from './sdk.ts'
 import { createLogExporterMetrics, type LogExporterOptions, logTransportOptions } from './transport.ts'
 
 /**
@@ -15,6 +13,9 @@ import { createLogExporterMetrics, type LogExporterOptions, logTransportOptions 
  */
 export function createEventLogExporter(options: LogExporterOptions, signal: AbortSignal): LogRecordExporter {
   const config = logTransportOptions(options)
+  const { OTLPExporterBase, createOtlpNetworkExportDelegate } = exporterBase()
+  const { JsonLogsSerializer } = otlpTransformer()
+  const request = got().default
   let agent: ReturnType<typeof config.agentFactory> | undefined
   const exporter = new OTLPExporterBase(createOtlpNetworkExportDelegate(config, JsonLogsSerializer, createLogExporterMetrics(config.url), {
     async send(data, timeoutMillis) {
@@ -24,7 +25,7 @@ export function createEventLogExporter(options: LogExporterOptions, signal: Abor
       const headers = await config.headers()
       signal.throwIfAborted()
       const compressed = config.compression === 'gzip'
-      const request = got.post(config.url, {
+      const pending = request.post(config.url, {
         body: compressed ? gzipSync(data) : Buffer.from(data),
         headers: { ...headers, ...(compressed ? { 'content-encoding': 'gzip' } : {}),
           ...(config.userAgent === undefined ? {} : { 'user-agent': config.userAgent }) },
@@ -35,8 +36,8 @@ export function createEventLogExporter(options: LogExporterOptions, signal: Abor
         responseType: 'buffer',
       })
       // Match the SDK's OTLP response-body limit, including chunked responses.
-      void request.on('downloadProgress', ({ transferred }) => { if (transferred > 4 * 1024 * 1024) request.cancel() })
-      const response = await request
+      void pending.on('downloadProgress', ({ transferred }) => { if (transferred > 4 * 1024 * 1024) pending.cancel() })
+      const response = await pending
       if (response.statusCode >= 300) throw new Error(`OTLP collector returned HTTP ${response.statusCode}`)
       return { status: 'success', data: response.body }
     },

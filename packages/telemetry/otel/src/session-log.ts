@@ -1,11 +1,15 @@
 /** Session-log records in an independent byte-bounded OTLP queue. */
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { Attributes } from '@opentelemetry/api'
-import { SeverityNumber } from '@opentelemetry/api-logs'
-import { ExportResultCode } from '@opentelemetry/core'
-import { JsonLogsSerializer } from '@opentelemetry/otlp-transformer'
-import { resourceFromAttributes } from '@opentelemetry/resources'
-import { LoggerProvider, type BatchLogRecordProcessorOptions, type LogRecordExporter, type ReadableLogRecord, type LogRecordProcessor } from '@opentelemetry/sdk-logs'
+import type { Logger, SeverityNumber } from '@opentelemetry/api-logs'
+import type {
+  BatchLogRecordProcessorOptions,
+  LoggerProvider,
+  LogRecordExporter,
+  LogRecordProcessor,
+  ReadableLogRecord,
+} from '@opentelemetry/sdk-logs'
+import { apiLogs, core, otlpTransformer, resources, sdkLogs } from './sdk.ts'
 import { createLogExporter, type LogExporterOptions } from './transport.ts'
 
 /** Collector request ceiling in uncompressed UTF-8 bytes, including the OTLP envelope. */
@@ -85,14 +89,13 @@ class SessionLogProcessor implements LogRecordProcessor {
   ) {}
 
   onEmit(record: ReadableLogRecord): void {
-    if (this.stopped) return
     if (this.queue.length >= this.config.maxQueueSize) {
       this.warn('Session log queue is full; record rejected')
       return
     }
     let bytes: number
     try {
-      const serialized = JsonLogsSerializer.serializeRequest([record])
+      const serialized = otlpTransformer().JsonLogsSerializer.serializeRequest([record])
       if (serialized === undefined) throw new Error('Session log serialization produced no request')
       bytes = serialized.byteLength
     } catch (error) {
@@ -157,7 +160,7 @@ class SessionLogProcessor implements LogRecordProcessor {
       }
       try {
         this.exporter.export(records, (result) => {
-          finish(result.code === ExportResultCode.SUCCESS
+          finish(result.code === core().ExportResultCode.SUCCESS
             ? undefined : result.error ?? new Error('Session log HTTP export failed'))
         })
       } catch (error) {
@@ -180,27 +183,20 @@ class SessionLogProcessor implements LogRecordProcessor {
   }
 }
 
-/** Owns feedback-authorized Session logs; no product-event provider or queue is mounted. */
+/** Owns feedback-authorized Session logs; the OTLP pipeline loads on the first record. */
 export class SessionLogReporter {
-  private readonly provider: LoggerProvider
-  private readonly processor: SessionLogProcessor
-  private readonly logger: ReturnType<LoggerProvider['getLogger']>
+  private readonly options: SessionLogOptions
+  private readonly limit: number
+  private provider: LoggerProvider | undefined
+  private logger: Logger | undefined
+  private processor: SessionLogProcessor | undefined
+  private failed = false
+  private stopped = false
 
   /** @param options - explicit transport, resource identity, queue limits, and diagnostics. */
   constructor(options: SessionLogOptions) {
-    const limit = resolveSessionLogLimits(options)
-    this.processor = new SessionLogProcessor(createLogExporter(options.exporter), limit, {
-      maxQueueSize: options.processor?.maxQueueSize ?? 2048,
-      maxExportBatchSize: options.processor?.maxExportBatchSize ?? 512,
-      scheduledDelayMillis: options.processor?.scheduledDelayMillis ?? 1000,
-      exportTimeoutMillis: options.processor?.exportTimeoutMillis ?? 30000,
-    }, options.onFailure)
-    this.provider = new LoggerProvider({
-      logRecordLimits: { attributeValueLengthLimit: Infinity, attributeCountLimit: Infinity },
-      resource: resourceFromAttributes(options.resourceAttributes),
-      processors: [this.processor],
-    })
-    this.logger = this.provider.getLogger(options.scope.name, options.scope.version)
+    this.limit = resolveSessionLogLimits(options)
+    this.options = options
   }
 
   /**
@@ -208,8 +204,12 @@ export class SessionLogReporter {
    * @param record - event with redacted data and its original Session id.
    */
   reportSessionLog(record: SessionLogRecord): void {
+    if (this.stopped) return
+    const logger = this.load()
+    if (logger === undefined) return
+    const { SeverityNumber } = apiLogs()
     const severityNumber = record.severityNumber ?? SeverityNumber.INFO
-    this.logger.emit({
+    logger.emit({
       eventName: 'session-log', body: 'session-log',
       timestamp: record.event.time, observedTimestamp: record.event.time,
       severityNumber, severityText: SeverityNumber[severityNumber],
@@ -218,11 +218,44 @@ export class SessionLogReporter {
   }
 
   /** Stop queued requests after the owning backend's shutdown deadline; an active transport may still settle. */
-  stopPending(): void { this.processor.stopPending() }
+  stopPending(): void {
+    this.stopped = true
+    this.processor?.stopPending()
+  }
 
   /**
    * Drain queued requests and release the SDK transport.
    * @returns completion after queued requests settle and the SDK transport shuts down.
    */
-  shutdown(): Promise<void> { return this.provider.shutdown() }
+  shutdown(): Promise<void> {
+    return this.provider?.shutdown() ?? Promise.resolve()
+  }
+
+  private load(): Logger | undefined {
+    if (this.logger !== undefined) return this.logger
+    if (this.failed) return undefined
+    try {
+      const { LoggerProvider } = sdkLogs()
+      const processor = new SessionLogProcessor(createLogExporter(this.options.exporter), this.limit, {
+        maxQueueSize: this.options.processor?.maxQueueSize ?? 2048,
+        maxExportBatchSize: this.options.processor?.maxExportBatchSize ?? 512,
+        scheduledDelayMillis: this.options.processor?.scheduledDelayMillis ?? 1000,
+        exportTimeoutMillis: this.options.processor?.exportTimeoutMillis ?? 30000,
+      }, this.options.onFailure)
+      const provider = new LoggerProvider({
+        logRecordLimits: { attributeValueLengthLimit: Infinity, attributeCountLimit: Infinity },
+        resource: resources().resourceFromAttributes(this.options.resourceAttributes),
+        processors: [processor],
+      })
+      this.processor = processor
+      this.provider = provider
+      this.logger = provider.getLogger(this.options.scope.name, this.options.scope.version)
+      return this.logger
+    } catch (error) {
+      this.failed = true
+      const failure = error instanceof Error ? error : new Error(String(error))
+      this.options.onFailure('Session log pipeline failed to load', failure)
+      return undefined
+    }
+  }
 }
