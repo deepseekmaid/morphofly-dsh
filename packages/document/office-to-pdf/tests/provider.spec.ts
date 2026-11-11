@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import OfficeToPdf, { Config, OfficeSourceKey, type OfficeToPdfRequest } from '../src/index.ts'
 
 const kit = vi.hoisted(() => ({ create: vi.fn<(options?: ConverterOptions) => Promise<Converter>>() }))
-vi.mock('@deepseek-ai/libreoffice-kit', () => ({ createConverter: kit.create }))
+vi.mock('../src/kit.ts', () => ({ loadKit: async () => ({ createConverter: kit.create }) }))
 
 const pdf = Buffer.from('%PDF-1.7\npreview\n%%EOF\n')
 const input = new Uint8Array([80, 75, 3, 4])

@@ -4,7 +4,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { extname, isAbsolute, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import { createConverter, type Converter, type ConverterOptions } from '@deepseek-ai/libreoffice-kit'
+import type { Converter, ConverterOptions } from '@deepseek-ai/libreoffice-kit'
+import { loadKit } from './kit.ts'
 import z from '@deepseek-ai/schemastery'
 import type { WorkspaceFileScope, WorkspaceFileStat } from '@deepseek-ai/dsh-api-workspace-files'
 import type {} from '@deepseek-ai/dsh-fs'
@@ -238,10 +239,13 @@ export class OfficeToPdf extends TypertRemoteService {
     let directory: string | undefined
     try {
       if (slot.converter === undefined) {
-        slot.converter = createConverter(this.options).catch((error: unknown) => {
-          delete slot.converter
-          throw error
-        })
+        // The kit's DOM/native tree is conversion-only, so it stays out of profile boot.
+        slot.converter = loadKit()
+          .then(({ createConverter }) => createConverter(this.options))
+          .catch((error: unknown) => {
+            delete slot.converter
+            throw error
+          })
       }
       const converter = await slot.converter
       signal.throwIfAborted()
