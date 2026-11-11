@@ -1185,14 +1185,12 @@ async function main(): Promise<void> {
     ...process.platform === 'darwin' || process.platform === 'win32'
       ? [{ label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } }] : [],
     { type: 'separator' },
-    ...development ? [
-      { label: currentDesktopLocale().messages.reloadPageMenu, role: 'reload' as const },
-      { label: currentDesktopLocale().messages.restartAppHostMenu, click: () => {
-        if (quitting) return
-        app.relaunch()
-        quitWithoutConfirmation()
-      } },
-    ] : [],
+    { label: currentDesktopLocale().messages.reloadPageMenu, role: 'reload' as const },
+    { label: currentDesktopLocale().messages.restartAppHostMenu, click: () => {
+      if (quitting) return
+      app.relaunch()
+      quitWithoutConfirmation()
+    } },
     { role: 'toggleDevTools', label: currentDesktopLocale().messages.toggleDevToolsMenu },
     { type: 'separator' },
     ...hideCommands,

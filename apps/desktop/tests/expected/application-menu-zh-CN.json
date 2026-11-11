@@ -16,6 +16,13 @@
     "type": "separator"
   },
   {
+    "label": "重新加载界面",
+    "role": "reload"
+  },
+  {
+    "label": "退出并重启"
+  },
+  {
     "role": "toggleDevTools",
     "label": "开发者工具"
   },
