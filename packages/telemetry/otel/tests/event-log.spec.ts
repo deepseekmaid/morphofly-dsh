@@ -1,6 +1,8 @@
 import { Agent, createServer, type RequestListener } from 'node:http'
 import { Agent as HttpsAgent } from 'node:https'
 import { once } from 'node:events'
+import { gunzipSync } from 'node:zlib'
+import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base'
 import { afterEach, expect, it, vi } from 'vitest'
 import { EventLogReporter, type EventLogOptions } from '../src/event-log.ts'
 
@@ -147,4 +149,27 @@ it('destroys the agent when cancellation rejects a batch already in flight', asy
   await received.promise
   await sender.shutdown(AbortSignal.abort())
   expect(destroy).toHaveBeenCalledTimes(1)
+})
+
+it('compresses with the SDK gzip option and forwards the configured user agent', async () => {
+  const encodings: (string | undefined)[] = []
+  const agents: (string | undefined)[] = []
+  const bodies: unknown[] = []
+  const url = await collector((req, res) => {
+    const chunks: Buffer[] = []
+    req.on('data', chunk => chunks.push(chunk as Buffer))
+    req.on('end', () => {
+      encodings.push(req.headers['content-encoding'])
+      agents.push(req.headers['user-agent'])
+      bodies.push(JSON.parse(gunzipSync(Buffer.concat(chunks)).toString()))
+      res.end('{}')
+    })
+  })
+  const { sender, onFailure } = reporter(url, { compression: CompressionAlgorithm.GZIP, userAgent: 'lazy-agent' })
+  sender.emit(event)
+  await sender.shutdown()
+  expect(onFailure).not.toHaveBeenCalled()
+  expect(encodings).toEqual(['gzip'])
+  expect(agents).toEqual(['lazy-agent'])
+  expect(bodies).toHaveLength(1)
 })

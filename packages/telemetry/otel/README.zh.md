@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-挂载一个 `otel` 服务即可创建普通事件和 Session 日志上报通道。每个通道拥有独立的 exporter、resource、instrumentation scope 和队列。仅挂载不会创建传输、身份或发送数据。业务调用方负责授权、脱敏、字段选择及通道销毁。
+挂载一个 `otel` 服务即可创建普通事件和 Session 日志上报通道。每个通道拥有独立的 exporter、resource、instrumentation scope 和队列。仅挂载不会创建传输、身份、加载 SDK 管线或发送数据；OTLP 管线在首条记录或事件时才加载。业务调用方负责授权、脱敏、字段选择及通道销毁。
 
 ## 目录
 
