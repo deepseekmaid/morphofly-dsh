@@ -142,6 +142,10 @@ Web、headless 与 SDK 继承 base bundle 的原生工具执行；使用 [PTC ov
 
 通过 `dsh plugin --profile <name> add <package-or-git-spec>` 安装外部插件组合包。安装的包拥有其依赖，并贡献其声明的 `cordis.patch.yml` 层。CLI 还随附 `@deepseek-ai/dsh-mcp-client` 作为供 patch 层使用的依赖，但默认不启用 MCP 服务器，因为每条服务器命令都是 agent 沙箱之外的受信任可执行代码。
 
+### 启动内存调优
+
+安装版启动器会在任何 profile 依赖加载之前，用 `--max-semi-space-size=4` 重新执行自身；以 `dsh web` 实测，稳态 RSS 降低约 50 MiB，启动 CPU 无可测变化。`DSH_MEMORY_PROFILE=low` 额外加上 `--optimize-for-size`，用启动 CPU 换取更小的堆，其他取值会以用法错误被拒绝。`DSH_DISABLE_GC_TUNING=1` 保留运行时默认值，而 `process.execArgv` 或 `NODE_OPTIONS` 中显式给出的 `--max-semi-space-size` 优先。只打印的命令（`--version`、`--help` 与配置 dump）以及没有 `process.execve` 的运行时不做任何处理。
+
 <a id="source-execution"></a>
 ## 源码执行
 

@@ -142,6 +142,10 @@ Feedback is recorded in the Session log without starting model work. The [DeepSe
 
 Install external plugin bundles through `dsh plugin --profile <name> add <package-or-git-spec>`. The installed package owns its dependencies and contributes its declared `cordis.patch.yml` layer. The CLI also ships `@deepseek-ai/dsh-mcp-client` as a dependency for patch layers, but no MCP server is enabled by default because each server command is trusted executable code outside the agent sandbox.
 
+### Launch memory tuning
+
+The installed launcher re-executes itself with `--max-semi-space-size=4` before any profile dependency loads; `dsh web` measured about 50 MiB lower settled RSS with no measurable startup CPU cost. `DSH_MEMORY_PROFILE=low` adds `--optimize-for-size`, trading startup CPU for a smaller heap, and rejects any other value with a usage error. `DSH_DISABLE_GC_TUNING=1` keeps the runtime default, and an explicit `--max-semi-space-size` in `process.execArgv` or `NODE_OPTIONS` takes precedence. Print-only commands (`--version`, `--help`, and config dumps) and runtimes without `process.execve` launch unchanged.
+
 <a id="source-execution"></a>
 ## Source execution
 

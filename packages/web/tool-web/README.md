@@ -120,7 +120,7 @@ The `web_search` and `web_fetch` registrations carry activation conditions that 
 
 ### Fetch flow
 
-`web_fetch` removes active and hidden HTML before a shared turndown converter renders GFM tables and strikethrough. A lexical nesting guard and conversion failures produce a fixed omission marker instead of returning unsafe raw HTML, and a synchronous conversion cap bounds DOM work. The complete output — header, untrusted-content notice, rendered body, and truncation footer — is then bounded as a whole. Conversion is memoized per result and cap so registry render and presentation share one parse.
+`web_fetch` removes active and hidden HTML before a shared turndown converter, loaded on the first conversion, renders GFM tables and strikethrough. A lexical nesting guard and conversion failures produce a fixed omission marker instead of returning unsafe raw HTML, and a synchronous conversion cap bounds DOM work. The complete output — header, untrusted-content notice, rendered body, and truncation footer — is then bounded as a whole. Conversion is memoized per result and cap so registry render and presentation share one parse.
 
 ### Presentation
 
