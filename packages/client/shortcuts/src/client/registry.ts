@@ -82,29 +82,30 @@ export class ShortcutRegistry {
    * @returns idempotent disposer removing both matching and catalog entries.
    */
   register(command: ShortcutCommand): () => void {
-    if (this.commands.has(command.id) || this.fixedCommands.has(command.id)) throw new Error(`Duplicate shortcut command: ${command.id}`)
+    const normalized: ShortcutCommand = { ...command, aliases: command.aliases ?? [], modals: command.modals ?? [] }
+    if (this.commands.has(normalized.id) || this.fixedCommands.has(normalized.id)) throw new Error(`Duplicate shortcut command: ${normalized.id}`)
     for (const runtime of ['desktop', 'web'] as const) {
       for (const platform of ['macos', 'windows', 'linux'] as const) {
-        const candidate = resolveShortcutDefault(command, runtime, platform)
+        const candidate = resolveShortcutDefault(normalized, runtime, platform)
         if (candidate === undefined) continue
         const binding = normalizeBinding(candidate, platform)
         if (runtime === 'web' && !isWebBindingAllowed(binding, platform)) {
-          throw new Error(`Unsupported Web shortcut: ${command.id}`)
+          throw new Error(`Unsupported Web shortcut: ${normalized.id}`)
         }
-        if (bindingIssue(binding, runtime, platform) !== null) throw new Error(`Reserved shortcut default: ${command.id}`)
+        if (bindingIssue(binding, runtime, platform) !== null) throw new Error(`Reserved shortcut default: ${normalized.id}`)
         for (const existing of this.commands.values()) {
           const other = resolveShortcutDefault(existing, runtime, platform)
           if (other !== undefined && overlappingBindings(binding, normalizeBinding(other, platform))) {
-            throw new Error(`Conflicting shortcut defaults: ${command.id} and ${existing.id} (${runtime}:${platform})`)
+            throw new Error(`Conflicting shortcut defaults: ${normalized.id} and ${existing.id} (${runtime}:${platform})`)
           }
         }
       }
     }
-    this.commands.set(command.id, command)
+    this.commands.set(normalized.id, normalized)
     this.refreshLabels()
     return () => {
-      if (this.commands.get(command.id) !== command) return
-      this.commands.delete(command.id)
+      if (this.commands.get(normalized.id) !== normalized) return
+      this.commands.delete(normalized.id)
       this.refreshLabels()
     }
   }

@@ -212,3 +212,18 @@ it.each(['macos', 'windows'] as const)('keeps %s priority identical before savin
   }
   expect(run).toHaveBeenCalledTimes(18)
 })
+
+it('defaults missing aliases and modals on legacy commands instead of crashing the catalog or dispatch', () => {
+  const registry = new ShortcutRegistry('web', 'windows')
+  const legacy = { id: 'legacy.command' as ShortcutCommandId, label: () => 'Legacy',
+    defaults: { 'web:windows': { code: 'Slash', modifiers: ['primary'] } },
+    regions: ['page'], resolve: () => ({ status: 'pass' }) } as unknown as ShortcutCommand
+  const dispose = registry.register(legacy)
+  expect(registry.catalog.getSnapshot()[0]?.aliases).toEqual([])
+  const input = { ...gesture, code: 'Slash', control: true, meta: false }
+  expect(registry.dispatch(input, { region: 'page', modal: 'settings', target: null }, vi.fn()))
+    .toEqual({ status: 'blocked', commandId: 'legacy.command', reason: 'modal' })
+  expect(() => registry.invoke('legacy.command' as ShortcutCommandId, { region: 'page', modal: 'settings', target: null })).not.toThrow()
+  dispose()
+  expect(registry.catalog.getSnapshot()).toHaveLength(0)
+})
