@@ -811,7 +811,7 @@ describe('desktop main startup', () => {
     expect(visible.filter(item => item.role === 'toggleDevTools')).toEqual([
       { role: 'toggleDevTools', label: messages.toggleDevToolsMenu },
     ])
-    expect(menu.find(item => item.label === messages.reloadPageMenu)?.role).toBe('reload')
+    expect(typeof menu.find(item => item.label === messages.reloadPageMenu)?.click).toBe('function')
     expect(typeof menu.find(item => item.label === messages.restartAppHostMenu)?.click).toBe('function')
     if (platform === 'win32') {
       expect(harness.menu.mock.calls[0]![0]).toEqual([
@@ -1356,8 +1356,8 @@ describe('desktop main startup', () => {
       : undefined)
     const application = template[0]!.submenu as MenuItemConstructorOptions[]
     expect(application.filter(item => item.visible !== false).map(describeItem)).toEqual(platform === 'darwin'
-      ? ['about', 'separator', en.checkUpdatesMenu, en.cliCommandMenu, 'separator', 'reload', en.restartAppHostMenu, 'toggleDevTools', 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit']
-      : ['about', 'separator', en.checkUpdatesMenu, 'separator', 'reload', en.restartAppHostMenu, 'toggleDevTools', 'separator', 'quit'])
+      ? ['about', 'separator', en.checkUpdatesMenu, en.cliCommandMenu, 'separator', en.reloadPageMenu, en.restartAppHostMenu, 'toggleDevTools', 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit']
+      : ['about', 'separator', en.checkUpdatesMenu, 'separator', en.reloadPageMenu, en.restartAppHostMenu, 'toggleDevTools', 'separator', 'quit'])
     expect(harness.menu.setApplicationMenu).toHaveBeenCalledOnce()
   })
 

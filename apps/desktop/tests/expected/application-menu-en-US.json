@@ -16,8 +16,7 @@
     "type": "separator"
   },
   {
-    "label": "Reload Interface",
-    "role": "reload"
+    "label": "Reload Interface"
   },
   {
     "label": "Quit and Restart"

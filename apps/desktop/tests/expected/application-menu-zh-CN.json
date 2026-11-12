@@ -16,8 +16,7 @@
     "type": "separator"
   },
   {
-    "label": "重新加载界面",
-    "role": "reload"
+    "label": "重新加载界面"
   },
   {
     "label": "退出并重启"

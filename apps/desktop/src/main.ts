@@ -1185,7 +1185,10 @@ async function main(): Promise<void> {
     ...process.platform === 'darwin' || process.platform === 'win32'
       ? [{ label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } }] : [],
     { type: 'separator' },
-    { label: currentDesktopLocale().messages.reloadPageMenu, role: 'reload' as const },
+    { label: currentDesktopLocale().messages.reloadPageMenu, click: () => {
+      if (mainWindow === undefined || mainWindow.isDestroyed()) return
+      mainWindow.webContents.reload()
+    } },
     { label: currentDesktopLocale().messages.restartAppHostMenu, click: () => {
       if (quitting) return
       app.relaunch()
